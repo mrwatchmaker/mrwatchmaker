@@ -1,8 +1,8 @@
 import sys
 import re
 
-i18n_path = r"c:\Users\USER\Desktop\watch_time\tg-timer-0.5.0\src\i18n.c"
-output_panel_path = r"c:\Users\USER\Desktop\watch_time\tg-timer-0.5.0\src\output_panel.c"
+i18n_path = r"c:\Users\USER\Desktop\mrwatchmaker\src\i18n.c"
+output_panel_path = r"c:\Users\USER\Desktop\mrwatchmaker\src\output_panel.c"
 
 strings = [
     # General
@@ -19,6 +19,8 @@ strings = [
     # Headers and labels
     ("║    🕰  MrWatchmaker  자세차 진단 리포트    ║\\n", "║   🕰  MrWatchmaker  Positional Report   ║\\n", "║     🕰  MrWatchmaker  姿勢差診断レポート     ║\\n", "║     🕰  MrWatchmaker  方位偏差诊断报告     ║\\n", "║    🕰  MrWatchmaker  Rapport Positionnel   ║\\n"),
     ("  — 종합 등급: ( 미측정 — 자세별 측정 후 표시됩니다 )\\n\\n", "  — Overall Grade: ( Unmeasured — Complete positional tests )\\n\\n", "  — 総合評価: ( 未測定 — 姿勢別測定後に表示されます )\\n\\n", "  — 综合评级: ( 未测量 — 请完成各方位测量 )\\n\\n", "  — Note Globale: ( Non mesuré — Terminez les tests positionnels )\\n\\n"),
+    ("서보모터가 연결되어 있지 않거나 <b>aitimebot</b>이 필요합니다.\\n<a href=\\\"http://mrwatchmaker.com\\\">mrwatchmaker.com</a> 에서 구매해 주세요.", "Servo motor is not connected or <b>aitimebot</b> is required.\\nPlease purchase it at <a href=\\\"http://mrwatchmaker.com\\\">mrwatchmaker.com</a>.", "サーボモーターが接続されていないか、<b>aitimebot</b>が必要です。\\n<a href=\\\"http://mrwatchmaker.com\\\">mrwatchmaker.com</a> で購入してください。", "伺服电机未连接或需要 <b>aitimebot</b>。\\n请在 <a href=\\\"http://mrwatchmaker.com\\\">mrwatchmaker.com</a> 购买。", "Le servomoteur n'est pas connecté ou <b>aitimebot</b> est requis.\\nVeuillez l'acheter sur <a href=\\\"http://mrwatchmaker.com\\\">mrwatchmaker.com</a>."),
+    ("장치 연결 오류", "Device Connection Error", "デバイス接続エラー", "设备连接错误", "Erreur de connexion de l'appareil"),
     ("  %s 종합 등급: ", "  %s Overall Grade: ", "  %s 総合評価: ", "  %s 综合评级: ", "  %s Note Globale: "),
     ("[ %s급 ]", "[ Grade %s ]", "[ %s級 ]", "[ %s级 ]", "[ Grade %s ]"),
     

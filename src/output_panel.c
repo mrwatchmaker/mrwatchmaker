@@ -1528,6 +1528,21 @@ void on_manual_measure_clicked(GtkWidget *widget, gpointer data) {
 	int target = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(widget), "manual_target"));
 	if (target < 0 || target > 7) return;
 
+	if (!motor_init(motor_get_port())) {
+		GtkWidget *win = gtk_widget_get_toplevel(op->panel);
+		if (!GTK_IS_WINDOW(win)) win = NULL;
+		GtkWidget *dlg = gtk_message_dialog_new(GTK_WINDOW(win),
+			GTK_DIALOG_MODAL, GTK_MESSAGE_ERROR, GTK_BUTTONS_OK, NULL);
+		gtk_message_dialog_set_markup(GTK_MESSAGE_DIALOG(dlg),
+			_("서보모터가 연결되어 있지 않거나 <b>aitimebot</b>이 필요합니다.\n<a href=\"http://mrwatchmaker.com\">mrwatchmaker.com</a> 에서 구매해 주세요."));
+		gtk_window_set_title(GTK_WINDOW(dlg), _("장치 연결 오류"));
+		if (win) gtk_window_set_transient_for(GTK_WINDOW(dlg), GTK_WINDOW(win));
+		gtk_dialog_run(GTK_DIALOG(dlg));
+		gtk_widget_destroy(dlg);
+		return;
+	}
+	motor_close();
+
 	set_manual_buttons_enabled(op, 0);
 	manual_reset_button_labels(op);
 	if (op->manual_measure_buttons[target])
@@ -1632,13 +1647,25 @@ void on_custom_spin_changed(GtkWidget *widget, gpointer data) {
 
 void on_test_custom_clicked(GtkWidget *widget, gpointer data) {
 	(void)widget;
-	(void)data;
+	struct output_panel *op = (struct output_panel *)data;
 	int id1_val = clamp_face(gtk_spin_button_get_value_as_int(GTK_SPIN_BUTTON(custom_id1_spin)));
 	int id2_val = clamp_arm(gtk_spin_button_get_value_as_int(GTK_SPIN_BUTTON(custom_id2_spin)));
 	int dur1 = calc_duration(last_pos1, id1_val);
 	int dur2 = calc_duration(last_pos2, id2_val);
 	
-	motor_init(motor_get_port());
+	if (!motor_init(motor_get_port())) {
+		GtkWidget *win = gtk_widget_get_toplevel(op->panel);
+		if (!GTK_IS_WINDOW(win)) win = NULL;
+		GtkWidget *dlg = gtk_message_dialog_new(GTK_WINDOW(win),
+			GTK_DIALOG_MODAL, GTK_MESSAGE_ERROR, GTK_BUTTONS_OK, NULL);
+		gtk_message_dialog_set_markup(GTK_MESSAGE_DIALOG(dlg),
+			_("서보모터가 연결되어 있지 않거나 <b>aitimebot</b>이 필요합니다.\n<a href=\"http://mrwatchmaker.com\">mrwatchmaker.com</a> 에서 구매해 주세요."));
+		gtk_window_set_title(GTK_WINDOW(dlg), _("장치 연결 오류"));
+		if (win) gtk_window_set_transient_for(GTK_WINDOW(dlg), GTK_WINDOW(win));
+		gtk_dialog_run(GTK_DIALOG(dlg));
+		gtk_widget_destroy(dlg);
+		return;
+	}
 	motor_ensure_torque_on();
 	motor_move(1, id1_val, dur1, 0);
 	g_usleep(100000);
@@ -1680,6 +1707,9 @@ static gpointer base_move_thread_func(gpointer data) {
 	g_usleep(100000);
 	motor_move(2, arm_positions[0], dur2, 0);
 	int released = motor_check_arm_stuck_after_9h();
+	// 떨림 방지를 위해 9시 이동 완료 후 토크 해제
+	g_usleep(dur2 > dur1 ? dur2 * 1000 : dur1 * 1000); // 이동 시간만큼 대기
+	motor_disable_torque_all();
 	motor_close();
 	base_done_data_t *bd = g_new(base_done_data_t, 1);
 	bd->released = released;
@@ -1690,6 +1720,21 @@ static gpointer base_move_thread_func(gpointer data) {
 
 void on_base_clicked(GtkWidget *widget, gpointer data) {
 	(void)widget;
+	struct output_panel *op = (struct output_panel *)data;
+	if (!motor_init(motor_get_port())) {
+		GtkWidget *win = gtk_widget_get_toplevel(op->panel);
+		if (!GTK_IS_WINDOW(win)) win = NULL;
+		GtkWidget *dlg = gtk_message_dialog_new(GTK_WINDOW(win),
+			GTK_DIALOG_MODAL, GTK_MESSAGE_ERROR, GTK_BUTTONS_OK, NULL);
+		gtk_message_dialog_set_markup(GTK_MESSAGE_DIALOG(dlg),
+			_("서보모터가 연결되어 있지 않거나 <b>aitimebot</b>이 필요합니다.\n<a href=\"http://mrwatchmaker.com\">mrwatchmaker.com</a> 에서 구매해 주세요."));
+		gtk_window_set_title(GTK_WINDOW(dlg), _("장치 연결 오류"));
+		if (win) gtk_window_set_transient_for(GTK_WINDOW(dlg), GTK_WINDOW(win));
+		gtk_dialog_run(GTK_DIALOG(dlg));
+		gtk_widget_destroy(dlg);
+		return;
+	}
+	motor_close();
 	g_thread_new("base_9h", base_move_thread_func, data);
 }
 
@@ -1739,6 +1784,9 @@ static gboolean auto_measure_tick(gpointer data) {
 		motor_move(1, face_positions[0], dur1, 0);
 		g_usleep(100000);
 		motor_move(2, arm_positions[0], dur2, 0);
+		// 떨림 방지를 위해 복귀 후 토크 끄기
+		g_usleep(dur2 > dur1 ? dur2 * 1000 : dur1 * 1000); // 이동 완료 대기
+		motor_disable_torque_all();
 		last_pos1 = face_positions[0];
 		last_pos2 = arm_positions[0];
 		motor_close();
@@ -1877,7 +1925,20 @@ void on_auto_measure_clicked(GtkWidget *widget, gpointer data) {
 	}
 
 	// 시작
-	motor_init(motor_get_port());
+	if (!motor_init(motor_get_port())) {
+		GtkWidget *win = gtk_widget_get_toplevel(op->panel);
+		if (!GTK_IS_WINDOW(win)) win = NULL;
+		GtkWidget *dlg = gtk_message_dialog_new(GTK_WINDOW(win),
+			GTK_DIALOG_MODAL, GTK_MESSAGE_ERROR, GTK_BUTTONS_OK, NULL);
+		gtk_message_dialog_set_markup(GTK_MESSAGE_DIALOG(dlg),
+			_("서보모터가 연결되어 있지 않거나 <b>aitimebot</b>이 필요합니다.\n<a href=\"http://mrwatchmaker.com\">mrwatchmaker.com</a> 에서 구매해 주세요."));
+		gtk_window_set_title(GTK_WINDOW(dlg), _("장치 연결 오류"));
+		if (win) gtk_window_set_transient_for(GTK_WINDOW(dlg), GTK_WINDOW(win));
+		gtk_dialog_run(GTK_DIALOG(dlg));
+		gtk_widget_destroy(dlg);
+		op->auto_measure_state = 0;
+		return;
+	}
 	motor_ensure_torque_on();
 
 	// 레이블 초기화 (고정 4 + 추가된 커스텀)
@@ -2001,6 +2062,21 @@ void on_winder_clicked(GtkWidget *widget, gpointer data) {
 			_("커스텀 위치를 먼저 추가한 뒤 시작하세요."));
 		return;
 	}
+
+	if (!motor_init(motor_get_port())) {
+		GtkWidget *win = gtk_widget_get_toplevel(op->panel);
+		if (!GTK_IS_WINDOW(win)) win = NULL;
+		GtkWidget *dlg = gtk_message_dialog_new(GTK_WINDOW(win),
+			GTK_DIALOG_MODAL, GTK_MESSAGE_ERROR, GTK_BUTTONS_OK, NULL);
+		gtk_message_dialog_set_markup(GTK_MESSAGE_DIALOG(dlg),
+			_("서보모터가 연결되어 있지 않거나 <b>aitimebot</b>이 필요합니다.\n<a href=\"http://mrwatchmaker.com\">mrwatchmaker.com</a> 에서 구매해 주세요."));
+		gtk_window_set_title(GTK_WINDOW(dlg), _("장치 연결 오류"));
+		if (win) gtk_window_set_transient_for(GTK_WINDOW(dlg), GTK_WINDOW(win));
+		gtk_dialog_run(GTK_DIALOG(dlg));
+		gtk_widget_destroy(dlg);
+		return;
+	}
+	motor_close();
 
 	op->winder_active = 1;
 	op->winder_state  = 0;

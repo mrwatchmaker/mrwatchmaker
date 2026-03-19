@@ -4,7 +4,7 @@
 #include <stdint.h>
 
 const char *motor_get_port(void);  /* port.conf에서 읽거나 기본 COM5 */
-void motor_init(const char *port_name);
+int motor_init(const char *port_name);
 void motor_move(uint8_t servo_id, int position, int time_ms, int speed);
 void motor_write_byte(uint8_t servo_id, uint8_t addr, uint8_t value);  /* 토크 등 1바이트 쓰기 */
 int  motor_read_present_position(uint8_t servo_id);  /* Present Position 읽기, 실패 시 -1 */

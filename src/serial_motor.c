@@ -42,7 +42,7 @@ const char *motor_get_port(void) {
 	return port_buf;
 }
 
-void motor_init(const char *port_name) {
+int motor_init(const char *port_name) {
     if (hSerial != INVALID_HANDLE_VALUE) {
         CloseHandle(hSerial);
     }
@@ -57,7 +57,7 @@ void motor_init(const char *port_name) {
                           
     if (hSerial == INVALID_HANDLE_VALUE) {
         printf("Error opening serial port %s\n", port_name);
-        return;
+        return 0;
     }
     
     DCB dcbSerialParams = {0};
@@ -67,7 +67,7 @@ void motor_init(const char *port_name) {
         printf("Error getting state\n");
         CloseHandle(hSerial);
         hSerial = INVALID_HANDLE_VALUE;
-        return;
+        return 0;
     }
     
     dcbSerialParams.BaudRate = 1000000; // 1 Mbps for ST3215
@@ -79,7 +79,7 @@ void motor_init(const char *port_name) {
         printf("Error setting state\n");
         CloseHandle(hSerial);
         hSerial = INVALID_HANDLE_VALUE;
-        return;
+        return 0;
     }
     
     COMMTIMEOUTS timeouts = {0};
@@ -91,6 +91,7 @@ void motor_init(const char *port_name) {
     
     SetCommTimeouts(hSerial, &timeouts);
     printf("Successfully opened %s at 1000000 baud\n", port_name);
+    return 1;
 }
 
 static uint8_t checksum(uint8_t *data, int len) {
@@ -282,9 +283,10 @@ const char *motor_get_port(void) {
 	return port_buf;
 }
 
-void motor_init(const char *port_name) {
+int motor_init(const char *port_name) {
 	(void)port_name;
 	/* Linux 시리얼 구현 없음: no-op */
+	return 0;
 }
 
 void motor_move(uint8_t servo_id, int position, int time_ms, int speed) {

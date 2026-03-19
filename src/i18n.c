@@ -162,6 +162,8 @@ static dict_entry_t dict_ko[] = {
     {"\n  시계가 주의가 필요한 상태입니다.\n  오버홀을 통해 오일 교체 및 부품 점검을\n  받으시면 상당한 개선이 기대됩니다.\n", "\n  시계가 주의가 필요한 상태입니다.\n  오버홀을 통해 오일 교체 및 부품 점검을\n  받으시면 상당한 개선이 기대됩니다.\n"},
     {"\n  시계의 상태가 좋지 않습니다.\n  신뢰할 수 있는 시계사에서 오버홀을 받으세요.\n  방치 시 부품 마모가 가속화될 수 있습니다. ⚠️\n", "\n  시계의 상태가 좋지 않습니다.\n  신뢰할 수 있는 시계사에서 오버홀을 받으세요.\n  방치 시 부품 마모가 가속화될 수 있습니다. ⚠️\n"},
     {"\n  즉각적인 오버홀이 필요합니다.\n  무브먼트 내부에 심각한 문제가 의심됩니다.\n  전문 시계사 방문을 강력히 권고합니다. 🔴\n", "\n  즉각적인 오버홀이 필요합니다.\n  무브먼트 내부에 심각한 문제가 의심됩니다.\n  전문 시계사 방문을 강력히 권고합니다. 🔴\n"},
+    {"서보모터가 연결되어 있지 않거나 <b>aitimebot</b>이 필요합니다.\n<a href=\"http://mrwatchmaker.com\">mrwatchmaker.com</a> 에서 구매해 주세요.", "서보모터가 연결되어 있지 않거나 <b>aitimebot</b>이 필요합니다.\n<a href=\"http://mrwatchmaker.com\">mrwatchmaker.com</a> 에서 구매해 주세요."},
+    {"장치 연결 오류", "장치 연결 오류"},
 {NULL, NULL}
 };
 
@@ -314,6 +316,8 @@ static dict_entry_t dict_en[] = {
     {"\n  시계가 주의가 필요한 상태입니다.\n  오버홀을 통해 오일 교체 및 부품 점검을\n  받으시면 상당한 개선이 기대됩니다.\n", "\n  The watch requires attention.\n  Significant improvement is expected from an\n  overhaul with oil change and parts check.\n"},
     {"\n  시계의 상태가 좋지 않습니다.\n  신뢰할 수 있는 시계사에서 오버홀을 받으세요.\n  방치 시 부품 마모가 가속화될 수 있습니다. ⚠️\n", "\n  The watch is in poor condition.\n  Get an overhaul from a trusted watchmaker.\n  Ignoring this may accelerate parts wear. ⚠️\n"},
     {"\n  즉각적인 오버홀이 필요합니다.\n  무브먼트 내부에 심각한 문제가 의심됩니다.\n  전문 시계사 방문을 강력히 권고합니다. 🔴\n", "\n  Immediate overhaul is required.\n  A serious internal movement problem is suspected.\n  Visiting a professional watchmaker is strongly advised. 🔴\n"},
+    {"서보모터가 연결되어 있지 않거나 <b>aitimebot</b>이 필요합니다.\n<a href=\"http://mrwatchmaker.com\">mrwatchmaker.com</a> 에서 구매해 주세요.", "Servo motor is not connected or <b>aitimebot</b> is required.\nPlease purchase it at <a href=\"http://mrwatchmaker.com\">mrwatchmaker.com</a>."},
+    {"장치 연결 오류", "Device Connection Error"},
 {NULL, NULL}
 };
 
@@ -466,6 +470,8 @@ static dict_entry_t dict_ja[] = {
     {"\n  시계가 주의가 필요한 상태입니다.\n  오버홀을 통해 오일 교체 및 부품 점검을\n  받으시면 상당한 개선이 기대됩니다.\n", "\n  時計に注意が必要な状態です。\n  オーバーホールでオイル交換と部品点検を\n  受ければ大幅な改善が期待できます。\n"},
     {"\n  시계의 상태가 좋지 않습니다.\n  신뢰할 수 있는 시계사에서 오버홀을 받으세요.\n  방치 시 부품 마모가 가속화될 수 있습니다. ⚠️\n", "\n  時計の状態が良くありません。\n  信頼できる時計店でオーバーホールを受けてください。\n  放置すると部品の摩耗が加速する可能性があります。 ⚠️\n"},
     {"\n  즉각적인 오버홀이 필요합니다.\n  무브먼트 내부에 심각한 문제가 의심됩니다.\n  전문 시계사 방문을 강력히 권고합니다. 🔴\n", "\n  即時のオーバーホールが必要です。\n  ムーブメント内部に深刻な問題が疑われます。\n  専門の時計店への訪問を強くお勧めします。 🔴\n"},
+    {"서보모터가 연결되어 있지 않거나 <b>aitimebot</b>이 필요합니다.\n<a href=\"http://mrwatchmaker.com\">mrwatchmaker.com</a> 에서 구매해 주세요.", "サーボモーターが接続されていないか、<b>aitimebot</b>が必要です。\n<a href=\"http://mrwatchmaker.com\">mrwatchmaker.com</a> で購入してください。"},
+    {"장치 연결 오류", "デバイス接続エラー"},
 {NULL, NULL}
 };
 
@@ -618,6 +624,8 @@ static dict_entry_t dict_zh[] = {
     {"\n  시계가 주의가 필요한 상태입니다.\n  오버홀을 통해 오일 교체 및 부품 점검을\n  받으시면 상당한 개선이 기대됩니다.\n", "\n  这块表处于需要注意的状态。\n  通过保养更换润滑油和检查零件，\n  有望获得显著改善。\n"},
     {"\n  시계의 상태가 좋지 않습니다.\n  신뢰할 수 있는 시계사에서 오버홀을 받으세요.\n  방치 시 부품 마모가 가속화될 수 있습니다. ⚠️\n", "\n  手表的状态不佳。\n  请在可靠的钟表匠处进行保养。\n  如果不加理会，零件磨损可能会加速。 ⚠️\n"},
     {"\n  즉각적인 오버홀이 필요합니다.\n  무브먼트 내부에 심각한 문제가 의심됩니다.\n  전문 시계사 방문을 강력히 권고합니다. 🔴\n", "\n  需要立即进行全面保养。\n  怀疑机芯内部存在严重问题。\n  强烈建议您拜访专业的钟表匠。 🔴\n"},
+    {"서보모터가 연결되어 있지 않거나 <b>aitimebot</b>이 필요합니다.\n<a href=\"http://mrwatchmaker.com\">mrwatchmaker.com</a> 에서 구매해 주세요.", "伺服电机未连接或需要 <b>aitimebot</b>。\n请在 <a href=\"http://mrwatchmaker.com\">mrwatchmaker.com</a> 购买。"},
+    {"장치 연결 오류", "设备连接错误"},
 {NULL, NULL}
 };
 
@@ -770,6 +778,8 @@ static dict_entry_t dict_fr[] = {
     {"\n  시계가 주의가 필요한 상태입니다.\n  오버홀을 통해 오일 교체 및 부품 점검을\n  받으시면 상당한 개선이 기대됩니다.\n", "\n  La montre nécessite de l'attention.\n  Une révision avec vidange d'huile et vérification\n  des pièces apportera une nette amélioration.\n"},
     {"\n  시계의 상태가 좋지 않습니다.\n  신뢰할 수 있는 시계사에서 오버홀을 받으세요.\n  방치 시 부품 마모가 가속화될 수 있습니다. ⚠️\n", "\n  La montre est en mauvais état.\n  Faites une révision chez un horloger de confiance.\n  L'ignorer peut accélérer l'usure des pièces. ⚠️\n"},
     {"\n  즉각적인 오버홀이 필요합니다.\n  무브먼트 내부에 심각한 문제가 의심됩니다.\n  전문 시계사 방문을 강력히 권고합니다. 🔴\n", "\n  Une révision immédiate est requise.\n  Un problème grave du mouvement est suspecté.\n  La visite chez un horloger pro est fortement conseillée. 🔴\n"},
+    {"서보모터가 연결되어 있지 않거나 <b>aitimebot</b>이 필요합니다.\n<a href=\"http://mrwatchmaker.com\">mrwatchmaker.com</a> 에서 구매해 주세요.", "Le servomoteur n'est pas connecté ou <b>aitimebot</b> est requis.\nVeuillez l'acheter sur <a href=\"http://mrwatchmaker.com\">mrwatchmaker.com</a>."},
+    {"장치 연결 오류", "Erreur de connexion de l'appareil"},
 {NULL, NULL}
 };
 

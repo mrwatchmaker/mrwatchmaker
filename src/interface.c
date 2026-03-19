@@ -767,7 +767,7 @@ static void init_main_window(struct main_window *w)
 				gtk_window_set_icon(GTK_WINDOW(w->window), fallback);
 				g_object_unref(fallback);
 			} else {
-				gtk_window_set_icon_name(GTK_WINDOW(w->window), PACKAGE);
+				gtk_window_set_icon_name(GTK_WINDOW(w->window), "mrwatchmaker");
 			}
 		}
 	}
