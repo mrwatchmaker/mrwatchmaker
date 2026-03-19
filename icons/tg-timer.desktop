@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Tg
+Comment=Software-based timegrapher
+Exec=tg-timer %F
+Icon=tg-timer
+Terminal=false
+Categories=Utility
+MimeType=application/x-tg-timer-data
