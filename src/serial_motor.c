@@ -102,12 +102,26 @@ static uint8_t checksum(uint8_t *data, int len) {
     return (~sum) & 0xFF;
 }
 
-/* STS3215 목표 위치: 0~4095만. Face/Arm 안전구간은 output_panel + mrwatchmaker_coords.txt
- * 의 face_lim / arm_lim 에서만 적용한다. 여기서 고정 1935 등으로 자르면 UI와 모터가 어긋난다. */
+/* 소프트웨어 안전 범위(하드스톱보다 약간 안쪽으로 잡는 것을 권장하지만,
+ * 여기서는 사용자가 확정한 값 그대로 적용). */
 static int clamp_pos_for_servo(uint8_t servo_id, int position) {
-    (void)servo_id;
-    if (position < 0) return 0;
-    if (position > 4095) return 4095;
+    /* ID 1 = face(회전), ID 2 = arm(상하) */
+    const int FACE_MIN = 1935;
+    const int FACE_MAX = 4087;
+    const int ARM_MIN  = 125;
+    const int ARM_MAX  = 2071;
+
+    if (servo_id == 1) {
+        if (position < FACE_MIN) return FACE_MIN;
+        if (position > FACE_MAX) return FACE_MAX;
+        return position;
+    }
+    if (servo_id == 2) {
+        if (position < ARM_MIN) return ARM_MIN;
+        if (position > ARM_MAX) return ARM_MAX;
+        return position;
+    }
+    /* 브로드캐스트/기타 ID는 원본 유지 */
     return position;
 }
 
@@ -207,16 +221,14 @@ int motor_read_present_position(uint8_t servo_id) {
     return -1;
 }
 
-/* Base(9시) 이동 후: Present 암 위치가 목표(goal_arm)에서 많이 벗어나면 쳐박힘으로 보고 토크 해제.
- * goal은 mrwatchmaker_coords 의 9시 암 값과 같아야 함(고정 1079 가정 시 coords만 바꿔도 오탐). */
-int motor_check_arm_stuck_after_9h(int goal_arm) {
+/* 9시 이동 후 대기 → 암 위치 읽어서 쳐박힘 시 암 토크만 해제. port 열린 상태에서 호출. 반환: 1=암 토크 해제함, 0=해제 안 함 */
+int motor_check_arm_stuck_after_9h(void) {
     if (hSerial == INVALID_HANDLE_VALUE) return 0;
-    if (goal_arm < 0) goal_arm = 0;
-    if (goal_arm > 4095) goal_arm = 4095;
     Sleep(3200);
     int pos = motor_read_present_position(2);
+    const int goal = 1079;
     const int threshold = 200;
-    if (pos >= 0 && abs(pos - goal_arm) > threshold) {
+    if (pos >= 0 && abs(pos - goal) > threshold) {
         motor_write_byte(2, 0x28, 0); /* Torque Enable = 0 (암 풀기) */
         return 1;
     }
@@ -295,8 +307,7 @@ int motor_read_present_position(uint8_t servo_id) {
 	return -1;
 }
 
-int motor_check_arm_stuck_after_9h(int goal_arm) {
-	(void)goal_arm;
+int motor_check_arm_stuck_after_9h(void) {
 	return 0;
 }
 

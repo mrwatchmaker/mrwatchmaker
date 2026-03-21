@@ -23,20 +23,7 @@
 #include <windows.h>
 #endif
 
-/* 자세차: 고정 6(5·6번 이름=custom_labels ch/cb) + 추가 커스텀 2 → 슬롯 0..7 */
-#define POS_FIXED_COUNT 6
-#define POS_CUSTOM_MAX 2
-#define POS_TOTAL_SLOTS 8
-#define POS_FIRST_CUSTOM_IDX 6
-
 // ── Watch Winder 프리셋 (init_output_panel에서 사용하므로 파일 최상단) ──
-/* 고정 5·6번(윗면/아랫면 자리) 표시명 — mrwatchmaker_coords.txt custom_labels (기본 ch / cb) */
-static char g_custom_label[2][40] = { "ch", "cb" };
-static char winder_preset_custom_name[96] = "커스텀 반복";
-/* 고정 6줄 다음 두 줄(face arm) = ch·cb — load_custom_positions 이후에 덮어씀 */
-static int g_file_ch_face, g_file_ch_arm, g_file_cb_face, g_file_cb_arm;
-static int g_file_ch_cb_count; /* 0 / 1 / 2 */
-
 typedef struct { const char *name; const int *seq; int len; } WinderPreset;
 
 static const int wp0[] = {3,0,1,2,3,2,1,0};
@@ -48,8 +35,8 @@ static const int wp5[] = {0,3,0,3};
 static const int wp6[] = {3,0,1,0};
 static const int wp7[] = {0,1,2,3,2,1};
 
-static const int wp_pos[] = {0,1,2,3,4,5,6,7}; /* 자세차 순서 (0..5 고정, 6..7 커스텀; 실제 길이 6+num_custom) */
-static const int wp_custom[] = {0,1};        /* ch/cb 반복 (길이 num_custom ≤ 2) */
+static const int wp_pos[] = {0,1,2,3,4,5,6,7}; /* 자세차 순서 프리셋용 (0..3 고정, 4+ 커스텀) */
+static const int wp_custom[] = {0,1,2,3};      /* 커스텀만 반복용 (실제 길이는 num_custom) */
 
 static const WinderPreset winder_presets[] = {
 	{"풀 코스 (6→9→12→3→6→3→12→9)",     wp0, 8},
@@ -60,37 +47,18 @@ static const WinderPreset winder_presets[] = {
 	{"가볍게 흔들기 (9시 ↔ 6시)",         wp5, 4},
 	{"6→9→12→9 왕복",                    wp6, 4},
 	{"시계방향 왕복 (9→12→3→6→3→12→9)", wp7, 6},
-	{"자세차 자동측정 순서 (반복)",       wp_pos, 8},   /* 실제 길이는 6+num_custom */
-	{winder_preset_custom_name,         wp_custom, 2}, /* 커스텀 1·2 반복 */
+	{"자세차 자동측정 순서 (반복)",       wp_pos, 8},   /* 실제 길이는 4+num_custom */
+	{"커스텀 1~N 반복",                  wp_custom, 4}, /* 실제 길이는 num_custom */
 };
 #define WINDER_PRESET_COUNT 10
 #define WINDER_PRESET_POSITIONAL 8
 #define WINDER_PRESET_CUSTOM_ONLY 9
 
-/* ── STS3215 소프트웨어 안전 범위: 기본값은 아래, 실제는 mrwatchmaker_coords.txt ─ */
-#define DEFAULT_FACE_MIN 1935
-#define DEFAULT_FACE_MAX 4087
-#define DEFAULT_ARM_MIN  125
-#define DEFAULT_ARM_MAX  2071
-
-#define MRW_COORDS_FILE "mrwatchmaker_coords.txt"
-
-static int g_face_min = DEFAULT_FACE_MIN;
-static int g_face_max = DEFAULT_FACE_MAX;
-static int g_arm_min = DEFAULT_ARM_MIN;
-static int g_arm_max = DEFAULT_ARM_MAX;
-/* 커스텀 스핀(ID1 Face / ID2 Arm) 기본값 — 파일 spin 줄에서 덮어씀 */
-static int g_spin_face = 2992;
-static int g_spin_arm = 108;
-
-/* 고정 6자세: 9·12·3·6시 + 윗면·아랫면 — 파일에서 6줄(face arm) */
-static int face_positions[6] = {1975, 2997, 4010, 2997, 1975, 2997};
-static int arm_positions[6]  = {1079, 2070, 1081, 125, 1079, 2070};
-static int last_pos1 = 1975;
-static int last_pos2 = 1079;
-
-static void load_coords_from_file(void);
-static void apply_coords_file_custom_ch_cb(struct output_panel *op);
+/* ── STS3215 소프트웨어 안전 범위 (사용자 지정) ───────────────────── */
+#define FACE_MIN 1935
+#define FACE_MAX 4087
+#define ARM_MIN  125
+#define ARM_MAX  2071
 
 /* 끝단 근처(하드스톱/기구 간섭/토크 부족)에서 버징/떨림이 생기기 쉬워
  * "와인더 동작"에 한해서만 여유를 두고 안쪽으로 클램프한다.
@@ -958,8 +926,6 @@ struct output_panel *init_output_panel(struct computer *comp, struct snapshot *s
 {
 	struct output_panel *op = malloc(sizeof(struct output_panel));
 
-	load_coords_from_file();
-
 	op->auto_measure_state = 0;
 	op->auto_measure_countdown = 0;
 	op->auto_measure_timer = 0;
@@ -1131,19 +1097,10 @@ struct output_panel *init_output_panel(struct computer *comp, struct snapshot *s
 	gtk_grid_set_column_spacing(GTK_GRID(pos_grid), 12);
 	gtk_box_pack_start(GTK_BOX(pos_vbox), pos_grid, FALSE, FALSE, 0);
 
-	// 고정 6자세 행 (5·6번 라벨은 custom_labels 의 ch / cb)
-	const char *pos_names_fixed4[] = {
-		_("🕘 9시 (기본)"), _("🕛 12시"), _("🕒 3시"), _("🕕 6시"),
-	};
-	for (int i = 0; i < POS_FIXED_COUNT; i++) {
-		GtkWidget *lbl_name;
-		if (i < 4) {
-			lbl_name = gtk_label_new(pos_names_fixed4[i]);
-		} else {
-			char *t = g_strdup_printf(i == 4 ? _("⬆ %s") : _("⬇ %s"), g_custom_label[i - 4]);
-			lbl_name = gtk_label_new(t);
-			g_free(t);
-		}
+	// 고정 4자세 행 (항상 표시)
+	const char* pos_names[] = {_("🕘 9시 (기본)"), _("🕛 12시"), _("🕒 3시"), _("🕕 6시")};
+	for (int i = 0; i < 4; i++) {
+		GtkWidget *lbl_name = gtk_label_new(pos_names[i]);
 		gtk_style_context_add_class(gtk_widget_get_style_context(lbl_name), "pos-name");
 		gtk_widget_set_halign(lbl_name, GTK_ALIGN_START);
 
@@ -1154,7 +1111,7 @@ struct output_panel *init_output_panel(struct computer *comp, struct snapshot *s
 		// 고정 자세 측정 버튼 (커스텀과 동일하게 행 오른쪽에 배치)
 		GtkWidget *measure_btn = gtk_button_new_with_label(_("측정"));
 		gtk_style_context_add_class(gtk_widget_get_style_context(measure_btn), "btn-test");
-		g_object_set_data(G_OBJECT(measure_btn), "manual_target", GINT_TO_POINTER(i)); // 0..5 고정
+		g_object_set_data(G_OBJECT(measure_btn), "manual_target", GINT_TO_POINTER(i)); // 0..3
 		extern void on_manual_measure_clicked(GtkWidget *widget, gpointer data);
 		g_signal_connect(measure_btn, "clicked", G_CALLBACK(on_manual_measure_clicked), op);
 		op->manual_measure_buttons[i] = measure_btn;
@@ -1165,10 +1122,10 @@ struct output_panel *init_output_panel(struct computer *comp, struct snapshot *s
 		gtk_grid_attach(GTK_GRID(pos_grid), measure_btn,       2, i, 1, 1);
 	}
 
-	// 추가 커스텀 행 (최대 2, 초기에는 숨김)
+	// 커스텀 4자세 행 (초기에는 숨김 → 추가 버튼 누를 때 표시)
 	extern void on_delete_custom_clicked(GtkWidget *widget, gpointer data);
-	for (int c = 0; c < POS_CUSTOM_MAX; c++) {
-		int row = POS_FIRST_CUSTOM_IDX + c;
+	for (int c = 0; c < 4; c++) {
+		int row = 4 + c;
 
 		op->custom_name_labels[c] = gtk_label_new(_("★ 커스텀 --"));
 		gtk_style_context_add_class(gtk_widget_get_style_context(op->custom_name_labels[c]), "pos-name");
@@ -1181,7 +1138,7 @@ struct output_panel *init_output_panel(struct computer *comp, struct snapshot *s
 		// 커스텀 측정 버튼 (해당 커스텀 위치로 이동 후 측정값 저장)
 		GtkWidget *measure_btn = gtk_button_new_with_label(_("측정"));
 		gtk_style_context_add_class(gtk_widget_get_style_context(measure_btn), "btn-test");
-		g_object_set_data(G_OBJECT(measure_btn), "manual_target", GINT_TO_POINTER(row)); // 6..7 커스텀
+		g_object_set_data(G_OBJECT(measure_btn), "manual_target", GINT_TO_POINTER(row)); // 4..7
 		extern void on_manual_measure_clicked(GtkWidget *widget, gpointer data);
 		g_signal_connect(measure_btn, "clicked", G_CALLBACK(on_manual_measure_clicked), op);
 		op->manual_measure_buttons[row] = measure_btn;
@@ -1234,8 +1191,8 @@ struct output_panel *init_output_panel(struct computer *comp, struct snapshot *s
 	GtkWidget *lbl_id1 = gtk_label_new(_("ID1 (Face)"));
 	gtk_style_context_add_class(gtk_widget_get_style_context(lbl_id1), "spin-label");
 	gtk_box_pack_start(GTK_BOX(custom_box), lbl_id1, FALSE, FALSE, 0);
-	custom_id1_spin = gtk_spin_button_new_with_range(g_face_min, g_face_max, 1);
-	gtk_spin_button_set_value(GTK_SPIN_BUTTON(custom_id1_spin), g_spin_face);
+	custom_id1_spin = gtk_spin_button_new_with_range(FACE_MIN, FACE_MAX, 1);
+	gtk_spin_button_set_value(GTK_SPIN_BUTTON(custom_id1_spin), 2992);
 	gtk_box_pack_start(GTK_BOX(custom_box), custom_id1_spin, FALSE, FALSE, 0);
 	extern void on_custom_spin_changed(GtkWidget *widget, gpointer data);
 	g_signal_connect(custom_id1_spin, "value-changed", G_CALLBACK(on_custom_spin_changed), op);
@@ -1243,8 +1200,8 @@ struct output_panel *init_output_panel(struct computer *comp, struct snapshot *s
 	GtkWidget *lbl_id2 = gtk_label_new(_("ID2 (Arm)"));
 	gtk_style_context_add_class(gtk_widget_get_style_context(lbl_id2), "spin-label");
 	gtk_box_pack_start(GTK_BOX(custom_box), lbl_id2, FALSE, FALSE, 0);
-	custom_id2_spin = gtk_spin_button_new_with_range(g_arm_min, g_arm_max, 1);
-	gtk_spin_button_set_value(GTK_SPIN_BUTTON(custom_id2_spin), g_spin_arm);
+	custom_id2_spin = gtk_spin_button_new_with_range(ARM_MIN, ARM_MAX, 1);
+	gtk_spin_button_set_value(GTK_SPIN_BUTTON(custom_id2_spin), 108);
 	gtk_box_pack_start(GTK_BOX(custom_box), custom_id2_spin, FALSE, FALSE, 0);
 	g_signal_connect(custom_id2_spin, "value-changed", G_CALLBACK(on_custom_spin_changed), op);
 
@@ -1258,20 +1215,19 @@ struct output_panel *init_output_panel(struct computer *comp, struct snapshot *s
 	{
 		extern int load_custom_positions(struct output_panel *op);
 		load_custom_positions(op);
-		apply_coords_file_custom_ch_cb(op);
 	}
 
 	// ── Watch Winder UI (hrow_top 오른쪽, 흰 공간 채움) ─────────────────
 	{
-		GtkWidget *winder_frame = gtk_frame_new(_("🔄  와치와인더"));
+		GtkWidget *winder_frame = gtk_frame_new(" 🔄  Watch Winder ");
 		gtk_style_context_add_class(gtk_widget_get_style_context(winder_frame), "pos-frame");
 
 		// Positional Error(자세차+커스텀) 영역을 스크롤 가능하게 → 작은 창/해상도에서도 커스텀 위치 행이 보이도록
 		GtkWidget *pos_scroll = gtk_scrolled_window_new(NULL, NULL);
 		gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(pos_scroll),
 			GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
-		/* 고정 6 + 커스텀 2줄 + 버튼 */
-		gtk_scrolled_window_set_min_content_height(GTK_SCROLLED_WINDOW(pos_scroll), 520);
+		/* 스크롤 없이(기본 4자세 + 커스텀 4줄 + 버튼들) 한 화면에 보이도록 높이 확보 */
+		gtk_scrolled_window_set_min_content_height(GTK_SCROLLED_WINDOW(pos_scroll), 440);
 		gtk_widget_set_size_request(pos_scroll, 420, -1);
 		gtk_container_add(GTK_CONTAINER(pos_scroll), pos_frame);
 
@@ -1296,11 +1252,9 @@ struct output_panel *init_output_panel(struct computer *comp, struct snapshot *s
 		gtk_box_pack_start(GTK_BOX(preset_hbox), preset_lbl, FALSE, FALSE, 0);
 
 		op->winder_preset_combo = gtk_combo_box_text_new();
-		for (int i = 0; i < WINDER_PRESET_COUNT; i++) {
-			const char *pn = (i == WINDER_PRESET_CUSTOM_ONLY)
-				? winder_presets[i].name : _(winder_presets[i].name);
-			gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(op->winder_preset_combo), pn);
-		}
+		for (int i = 0; i < WINDER_PRESET_COUNT; i++)
+			gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(op->winder_preset_combo),
+			                               _(winder_presets[i].name));
 		gtk_combo_box_set_active(GTK_COMBO_BOX(op->winder_preset_combo), 0);
 		gtk_box_pack_start(GTK_BOX(preset_hbox), op->winder_preset_combo, TRUE, TRUE, 0);
 
@@ -1378,29 +1332,36 @@ struct output_panel *init_output_panel(struct computer *comp, struct snapshot *s
 
 // Auto measure state machine
 // Face motor (ID 1) positions: 9, 12, 3, 6, Custom
-// 고정 자세 좌표·제한·스핀 기본값은 mrwatchmaker_coords.txt (exe 폴더) 참고
+// 9시 방향 (기본 자세) : 3044,987
+// 12시 방향  3047 , 1991
+// 3시 방향    3047 , 3005
+// 6시 방향  4093 ,  2015
+// 추가 자세차    4084 , 2014
+// 고정 자세: 9시=0, 12시=1, 3시=2, 6시=3
+static int face_positions[] = {1975, 2997, 4010, 2997};
+static int arm_positions[]  = {1079, 2070, 1081, 125};
 
 static int clamp_face_hard(int v) {
-	if (v < g_face_min) return g_face_min;
-	if (v > g_face_max) return g_face_max;
+	if (v < FACE_MIN) return FACE_MIN;
+	if (v > FACE_MAX) return FACE_MAX;
 	return v;
 }
 static int clamp_arm_hard(int v) {
-	if (v < g_arm_min) return g_arm_min;
-	if (v > g_arm_max) return g_arm_max;
+	if (v < ARM_MIN) return ARM_MIN;
+	if (v > ARM_MAX) return ARM_MAX;
 	return v;
 }
 
 static int clamp_face_soft(int v) {
-	const int minv = g_face_min + FACE_SOFT_MARGIN;
-	const int maxv = g_face_max - FACE_SOFT_MARGIN;
+	const int minv = FACE_MIN + FACE_SOFT_MARGIN;
+	const int maxv = FACE_MAX - FACE_SOFT_MARGIN;
 	if (v < minv) return minv;
 	if (v > maxv) return maxv;
 	return v;
 }
 static int clamp_arm_soft(int v) {
-	const int minv = g_arm_min + ARM_SOFT_MARGIN;
-	const int maxv = g_arm_max - ARM_SOFT_MARGIN;
+	const int minv = ARM_MIN + ARM_SOFT_MARGIN;
+	const int maxv = ARM_MAX - ARM_SOFT_MARGIN;
 	if (v < minv) return minv;
 	if (v > maxv) return maxv;
 	return v;
@@ -1427,143 +1388,11 @@ static int clamp_arm(int v) {
 	return clamp_arm_hard(v);
 }
 
-static void coords_build_path(char *out, size_t outsz)
-{
-#ifdef _WIN32
-	char exe[520];
-	DWORD n = GetModuleFileNameA(NULL, exe, sizeof(exe));
-	if (n > 0 && n < sizeof(exe)) {
-		char *slash = strrchr(exe, '\\');
-		if (slash) {
-			slash[1] = '\0';
-			snprintf(out, outsz, "%s%s", exe, MRW_COORDS_FILE);
-			return;
-		}
-	}
-#endif
-	snprintf(out, outsz, "%s", MRW_COORDS_FILE);
-}
-
-static void coords_trim_line(char *s)
-{
-	char *a = s;
-	while (*a == ' ' || *a == '\t' || *a == '\r' || *a == '\n')
-		a++;
-	if (a != s)
-		memmove(s, a, strlen(a) + 1);
-	size_t L = strlen(s);
-	while (L > 0 && (s[L - 1] == ' ' || s[L - 1] == '\t' || s[L - 1] == '\r' || s[L - 1] == '\n'))
-		s[--L] = '\0';
-}
-
-/* exe 옆 mrwatchmaker_coords.txt: face_lim/arm_lim, custom_labels(고정5·6번=ch/cb), spin, 고정6줄, 커스텀2줄 */
-static void load_coords_from_file(void)
-{
-	char path[600];
-	coords_build_path(path, sizeof(path));
-	FILE *f = fopen(path, "r");
-	if (!f)
-		return;
-	g_file_ch_cb_count = 0;
-	strncpy(g_custom_label[0], "ch", sizeof(g_custom_label[0]));
-	g_custom_label[0][sizeof(g_custom_label[0]) - 1] = '\0';
-	strncpy(g_custom_label[1], "cb", sizeof(g_custom_label[1]));
-	g_custom_label[1][sizeof(g_custom_label[1]) - 1] = '\0';
-	char line[256];
-	int pose_idx = 0;
-	while (fgets(line, sizeof(line), f)) {
-		coords_trim_line(line);
-		if (!line[0] || line[0] == '#')
-			continue;
-		if (strncmp(line, "face_lim", 8) == 0 && (line[8] == ' ' || line[8] == '\t' || line[8] == '\0')) {
-			int a, b;
-			char *p = line + 8;
-			while (*p == ' ' || *p == '\t') p++;
-			if (sscanf(p, "%d %d", &a, &b) == 2 && a <= b) {
-				g_face_min = a;
-				g_face_max = b;
-			}
-			continue;
-		}
-		if (strncmp(line, "arm_lim", 7) == 0 && (line[7] == ' ' || line[7] == '\t' || line[7] == '\0')) {
-			int a, b;
-			char *p = line + 7;
-			while (*p == ' ' || *p == '\t') p++;
-			if (sscanf(p, "%d %d", &a, &b) == 2 && a <= b) {
-				g_arm_min = a;
-				g_arm_max = b;
-			}
-			continue;
-		}
-		if (strncmp(line, "spin", 4) == 0 && (line[4] == ' ' || line[4] == '\t' || line[4] == '\0')) {
-			int a, b;
-			char *p = line + 4;
-			while (*p == ' ' || *p == '\t') p++;
-			if (sscanf(p, "%d %d", &a, &b) == 2) {
-				g_spin_face = a;
-				g_spin_arm = b;
-			}
-			continue;
-		}
-		if (strncmp(line, "custom_labels", 13) == 0 &&
-		    (line[13] == ' ' || line[13] == '\t' || line[13] == '\0')) {
-			char a[40], b[40];
-			char *p = line + 13;
-			while (*p == ' ' || *p == '\t') p++;
-			if (sscanf(p, "%39s %39s", a, b) == 2 && a[0] && b[0]) {
-				strncpy(g_custom_label[0], a, sizeof(g_custom_label[0]));
-				g_custom_label[0][sizeof(g_custom_label[0]) - 1] = '\0';
-				strncpy(g_custom_label[1], b, sizeof(g_custom_label[1]));
-				g_custom_label[1][sizeof(g_custom_label[1]) - 1] = '\0';
-			}
-			continue;
-		}
-		int f, a;
-		if (sscanf(line, "%d %d", &f, &a) == 2) {
-			if (pose_idx < POS_FIXED_COUNT) {
-				face_positions[pose_idx] = f;
-				arm_positions[pose_idx] = a;
-				pose_idx++;
-			} else if (pose_idx < POS_FIXED_COUNT + 2) {
-				if (pose_idx == POS_FIXED_COUNT) {
-					g_file_ch_face = f;
-					g_file_ch_arm = a;
-					g_file_ch_cb_count = 1;
-				} else {
-					g_file_cb_face = f;
-					g_file_cb_arm = a;
-					g_file_ch_cb_count = 2;
-				}
-				pose_idx++;
-			}
-		}
-	}
-	fclose(f);
-	snprintf(winder_preset_custom_name, sizeof(winder_preset_custom_name), "%s", _("커스텀 반복"));
-	for (int i = 0; i < POS_FIXED_COUNT; i++) {
-		face_positions[i] = clamp_face_hard(face_positions[i]);
-		arm_positions[i] = clamp_arm_hard(arm_positions[i]);
-	}
-	g_spin_face = clamp_face_hard(g_spin_face);
-	g_spin_arm = clamp_arm_hard(g_spin_arm);
-	last_pos1 = face_positions[0];
-	last_pos2 = arm_positions[0];
-}
-
 static const char *winder_pos_name[] = {"9시", "12시", "3시", "6시"};
 
-/* 추가 커스텀 좌표 (커스텀 1·2) */
-static int custom_face_pos[2] = {0, 0};
-static int custom_arm_pos[2]  = {0, 0};
-
-static const char *custom_slot_name(int idx)
-{
-	switch (idx) {
-	case 0: return _("커스텀 1");
-	case 1: return _("커스텀 2");
-	default: return _("커스텀");
-	}
-}
+// 커스텀 자세 (최대 4개, 동적 추가)
+static int custom_face_pos[4] = {0, 0, 0, 0};
+static int custom_arm_pos[4]  = {0, 0, 0, 0};
 
 // 이동 거리에 따라 속도를 자동 계산 (최소 5초, 거리가 클수록 더 느리게)
 static int calc_duration(int from, int to) {
@@ -1581,6 +1410,10 @@ static void motor_ensure_torque_on(void) {
 	motor_write_byte(2, 0x28, 1); /* Torque Enable = 1 */
 }
 
+// 마지막으로 이동한 위치 기억 (속도 계산용)
+static int last_pos1 = 1975;
+static int last_pos2 = 1079;
+
 /* ── 수동 자세별 측정(버튼): 해당 자세로 이동 후 카운트다운 뒤 값 저장 ───────── */
 typedef struct { struct output_panel *op; int target; } manual_move_data_t;
 
@@ -1594,23 +1427,15 @@ static void set_manual_buttons_enabled(struct output_panel *op, int enabled) {
 }
 
 static void manual_reset_button_labels(struct output_panel *op) {
-	static const char *fixed_names[4] = {
-		"🕘 9시 측정", "🕛 12시 측정", "🕒 3시 측정", "🕕 6시 측정",
-	};
+	static const char *fixed_names[4] = {"🕘 9시 측정", "🕛 12시 측정", "🕒 3시 측정", "🕕 6시 측정"};
 	for (int i = 0; i < 4; i++)
 		if (op->manual_measure_buttons[i])
 			gtk_button_set_label(GTK_BUTTON(op->manual_measure_buttons[i]), _(fixed_names[i]));
-	for (int i = 4; i < POS_FIXED_COUNT; i++)
-		if (op->manual_measure_buttons[i]) {
-			char buf[64];
-			snprintf(buf, sizeof(buf), _("★%s 측정"), g_custom_label[i - 4]);
-			gtk_button_set_label(GTK_BUTTON(op->manual_measure_buttons[i]), buf);
-		}
-	for (int c = 0; c < POS_CUSTOM_MAX; c++) {
-		int idx = POS_FIRST_CUSTOM_IDX + c;
+	for (int c = 0; c < 4; c++) {
+		int idx = 4 + c;
 		if (op->manual_measure_buttons[idx]) {
 			char buf[32];
-			snprintf(buf, sizeof(buf), _("★%s 측정"), custom_slot_name(c));
+			snprintf(buf, sizeof(buf), _("★%d 측정"), c + 1);
 			gtk_button_set_label(GTK_BUTTON(op->manual_measure_buttons[idx]), buf);
 		}
 	}
@@ -1670,11 +1495,11 @@ static gpointer manual_move_thread_func(gpointer data) {
 	if (t < 0 || t > 7) return NULL;
 
 	int p1, p2;
-	if (t < POS_FIXED_COUNT) {
+	if (t < 4) {
 		p1 = clamp_face(face_positions[t]);
 		p2 = clamp_arm(arm_positions[t]);
 	} else {
-		int c = t - POS_FIRST_CUSTOM_IDX;
+		int c = t - 4;
 		p1 = clamp_face(custom_face_pos[c]);
 		p2 = clamp_arm(custom_arm_pos[c]);
 	}
@@ -1729,30 +1554,32 @@ void on_manual_measure_clicked(GtkWidget *widget, gpointer data) {
 	g_thread_new("manual_measure_move", manual_move_thread_func, md);
 }
 
-/* 슬롯 0..5 고정 6자세, 6..7 추가 커스텀 */
+// 자세차 순서 프리셋: 슬롯 인덱스(0=9시..3=6시, 4+=커스텀) → face/arm 위치
 static void get_positional_slot_face_arm(struct output_panel *op, int slot_idx, int *out_p1, int *out_p2) {
-	if (slot_idx < POS_FIXED_COUNT) {
+	if (slot_idx < 4) {
 		*out_p1 = face_positions[slot_idx];
 		*out_p2 = arm_positions[slot_idx];
 	} else {
-		int c = slot_idx - POS_FIRST_CUSTOM_IDX;
+		int c = slot_idx - 4;
 		*out_p1 = (c < op->num_custom) ? custom_face_pos[c] : face_positions[0];
 		*out_p2 = (c < op->num_custom) ? custom_arm_pos[c]  : arm_positions[0];
 	}
 }
 
+// 자세차 순서 프리셋: 슬롯 인덱스 → 표시 이름 (상태 라벨용)
 static const char *get_positional_slot_name(struct output_panel *op, int slot_idx) {
+	static char buf[32];
 	(void)op;
-	if (slot_idx < 4)
-		return _(winder_pos_name[slot_idx]);
-	if (slot_idx < 6)
-		return g_custom_label[slot_idx - 4];
-	return custom_slot_name(slot_idx - POS_FIRST_CUSTOM_IDX);
+	if (slot_idx < 4) return _(winder_pos_name[slot_idx]);
+	snprintf(buf, sizeof(buf), _("커스텀 %d"), slot_idx - 3);
+	return buf;
 }
 
 /* 커스텀만 반복 프리셋: 슬롯 인덱스 → 표시 이름 */
 static const char *get_custom_only_slot_name(int slot_idx) {
-	return custom_slot_name(slot_idx);
+	static char buf[32];
+	snprintf(buf, sizeof(buf), _("커스텀 %d"), slot_idx + 1);
+	return buf;
 }
 
 /* 와인더 연속 궤적(trajectory)용: 현재 스텝의 목표(face/arm) 계산 */
@@ -1761,7 +1588,7 @@ static void winder_compute_step_targets(struct output_panel *op, int *out_p1, in
 	int total, pos_idx, p1, p2;
 
 	if (op->winder_preset == WINDER_PRESET_POSITIONAL) {
-		total = POS_FIXED_COUNT + op->num_custom;
+		total = 4 + op->num_custom;
 		if (total <= 0) total = 1;
 		pos_idx = op->winder_state % total;
 		get_positional_slot_face_arm(op, pos_idx, &p1, &p2);
@@ -1808,12 +1635,10 @@ void on_custom_spin_changed(GtkWidget *widget, gpointer data) {
 	motor_ensure_torque_on();
 	if (widget == custom_id1_spin) {
 		int id1_val = clamp_face(gtk_spin_button_get_value_as_int(GTK_SPIN_BUTTON(custom_id1_spin)));
-		g_spin_face = id1_val;
 		motor_move(1, id1_val, 1500, 0); // 스핀 미세조정: 1.5초 고정
 		last_pos1 = id1_val;
 	} else if (widget == custom_id2_spin) {
 		int id2_val = clamp_arm(gtk_spin_button_get_value_as_int(GTK_SPIN_BUTTON(custom_id2_spin)));
-		g_spin_arm = id2_val;
 		motor_move(2, id2_val, 1500, 0); // 스핀 미세조정: 1.5초 고정
 		last_pos2 = id2_val;
 	}
@@ -1881,7 +1706,7 @@ static gpointer base_move_thread_func(gpointer data) {
 	motor_move(1, face_positions[0], dur1, 0);
 	g_usleep(100000);
 	motor_move(2, arm_positions[0], dur2, 0);
-	int released = motor_check_arm_stuck_after_9h(arm_positions[0]);
+	int released = motor_check_arm_stuck_after_9h();
 	// 떨림 방지를 위해 9시 이동 완료 후 토크 해제
 	g_usleep(dur2 > dur1 ? dur2 * 1000 : dur1 * 1000); // 이동 시간만큼 대기
 	motor_disable_torque_all();
@@ -1915,7 +1740,7 @@ void on_base_clicked(GtkWidget *widget, gpointer data) {
 
 static gboolean auto_measure_tick(gpointer data) {
 	struct output_panel *op = (struct output_panel *)data;
-	int total = POS_FIXED_COUNT + op->num_custom; /* 고정 6 + ch/cb */
+	int total = 4 + op->num_custom; // 고정 4 + 추가된 커스텀 수
 
 	if (op->auto_measure_state == 0) {
 		return G_SOURCE_REMOVE;
@@ -1978,8 +1803,8 @@ static gboolean auto_measure_tick(gpointer data) {
 	{
 		int next = op->auto_measure_state - 1;
 		int p1, p2;
-		if (next >= POS_FIXED_COUNT) {
-			int c = next - POS_FIRST_CUSTOM_IDX;
+		if (next >= 4) {
+			int c = next - 4;
 			p1 = clamp_face(custom_face_pos[c]);
 			p2 = clamp_arm(custom_arm_pos[c]);
 		} else {
@@ -2003,40 +1828,12 @@ static gboolean auto_measure_tick(gpointer data) {
 // ── 커스텀 자세 저장/불러오기 ────────────────────────────────────────
 #define CUSTOM_POS_FILE "custom_positions.conf"
 
-/* conf 저장 시 coords.txt 도 같이 써서 두 파일 커스텀 값이 어긋나지 않게 함 */
-static void write_coords_file_from_state(int num_custom_saved)
-{
-	char path[600];
-	coords_build_path(path, sizeof(path));
-	FILE *f = fopen(path, "w");
-	if (!f)
-		return;
-	fprintf(f, "# MrWatchmaker — exe와 같은 폴더에 두고 편집\n");
-	fprintf(f, "# custom_labels: 고정 5·6번(윗면/아랫면 자리) 표시 이름\n");
-	fprintf(f, "custom_labels %s %s\n\n", g_custom_label[0], g_custom_label[1]);
-	fprintf(f, "# 1번(ID1 Face) 틱 제한 / 2번(ID2 Arm) 틱 제한\n");
-	fprintf(f, "face_lim %d %d\n", g_face_min, g_face_max);
-	fprintf(f, "arm_lim %d %d\n\n", g_arm_min, g_arm_max);
-	fprintf(f, "# 커스텀 스핀 기본 좌표 (Face, Arm)\n");
-	fprintf(f, "spin %d %d\n\n", g_spin_face, g_spin_arm);
-	fprintf(f, "# 고정 6자세: 9시 → … → (cb). 각 줄 face arm\n");
-	for (int i = 0; i < POS_FIXED_COUNT; i++)
-		fprintf(f, "%d %d\n", face_positions[i], arm_positions[i]);
-	fprintf(f, "\n# 추가 커스텀 1·2 (아래 줄 수 = 저장된 커스텀 개수, custom_positions.conf 와 동일)\n");
-	for (int i = 0; i < num_custom_saved && i < POS_CUSTOM_MAX; i++)
-		fprintf(f, "%d %d\n", custom_face_pos[i], custom_arm_pos[i]);
-	fclose(f);
-}
-
 static void save_custom_positions(int num) {
 	FILE *f = fopen(CUSTOM_POS_FILE, "w");
-	if (f) {
-		for (int i = 0; i < num; i++)
-			fprintf(f, "%d,%d\n", custom_face_pos[i], custom_arm_pos[i]);
-		fclose(f);
-	}
-	/* conf 실패해도 coords 는 써서 한쪽만 갱신되는 상황을 줄임 */
-	write_coords_file_from_state(num);
+	if (!f) return;
+	for (int i = 0; i < num; i++)
+		fprintf(f, "%d,%d\n", custom_face_pos[i], custom_arm_pos[i]);
+	fclose(f);
 }
 
 // 저장 파일에서 불러와 UI에 적용 (init 시 호출)
@@ -2044,13 +1841,13 @@ int load_custom_positions(struct output_panel *op) {
 	FILE *f = fopen(CUSTOM_POS_FILE, "r");
 	if (!f) return 0;
 	int n = 0;
-	while (n < POS_CUSTOM_MAX && fscanf(f, "%d,%d\n", &custom_face_pos[n], &custom_arm_pos[n]) == 2) {
+	while (n < 4 && fscanf(f, "%d,%d\n", &custom_face_pos[n], &custom_arm_pos[n]) == 2) {
 		custom_face_pos[n] = clamp_face(custom_face_pos[n]);
 		custom_arm_pos[n]  = clamp_arm(custom_arm_pos[n]);
 		char name_buf[48];
-		sprintf(name_buf, _("★ %s  (%d, %d)"), custom_slot_name(n), custom_face_pos[n], custom_arm_pos[n]);
+		sprintf(name_buf, _("★ 커스텀 %d  (%d, %d)"), n + 1, custom_face_pos[n], custom_arm_pos[n]);
 		gtk_label_set_text(GTK_LABEL(op->custom_name_labels[n]), name_buf);
-		gtk_label_set_text(GTK_LABEL(op->pos_labels[POS_FIRST_CUSTOM_IDX + n]), _("Rate: -- s/d  |  Amp: --°  |  BE: -- ms"));
+		gtk_label_set_text(GTK_LABEL(op->pos_labels[4 + n]), _("Rate: -- s/d  |  Amp: --°  |  BE: -- ms"));
 		gtk_widget_set_no_show_all(op->custom_rows[n], FALSE);
 		gtk_widget_show_all(op->custom_rows[n]);
 		n++;
@@ -2062,12 +1859,12 @@ int load_custom_positions(struct output_panel *op) {
 
 // 모든 커스텀 행 레이블 갱신 (삭제 후 재정렬)
 static void refresh_custom_rows(struct output_panel *op) {
-	for (int i = 0; i < POS_CUSTOM_MAX; i++) {
+	for (int i = 0; i < 4; i++) {
 		if (i < op->num_custom) {
 			char name_buf[48];
-			sprintf(name_buf, _("★ %s  (%d, %d)"), custom_slot_name(i), custom_face_pos[i], custom_arm_pos[i]);
+			sprintf(name_buf, _("★ 커스텀 %d  (%d, %d)"), i + 1, custom_face_pos[i], custom_arm_pos[i]);
 			gtk_label_set_text(GTK_LABEL(op->custom_name_labels[i]), name_buf);
-			gtk_label_set_text(GTK_LABEL(op->pos_labels[POS_FIRST_CUSTOM_IDX + i]), _("Rate: -- s/d  |  Amp: --°  |  BE: -- ms"));
+			gtk_label_set_text(GTK_LABEL(op->pos_labels[4 + i]), _("Rate: -- s/d  |  Amp: --°  |  BE: -- ms"));
 			gtk_widget_set_no_show_all(op->custom_rows[i], FALSE);
 			gtk_widget_show_all(op->custom_rows[i]);
 		} else {
@@ -2075,23 +1872,6 @@ static void refresh_custom_rows(struct output_panel *op) {
 			gtk_widget_hide(op->custom_rows[i]);
 		}
 	}
-}
-
-/* coords.txt 에 적어 둔 ch·cb 줄을 custom_positions.conf 보다 우선 적용 */
-static void apply_coords_file_custom_ch_cb(struct output_panel *op)
-{
-	if (g_file_ch_cb_count < 1)
-		return;
-	for (int i = 0; i < g_file_ch_cb_count && i < 2; i++) {
-		int f = (i == 0) ? g_file_ch_face : g_file_cb_face;
-		int a = (i == 0) ? g_file_ch_arm : g_file_cb_arm;
-		custom_face_pos[i] = clamp_face(f);
-		custom_arm_pos[i]  = clamp_arm(a);
-	}
-	if (op->num_custom < g_file_ch_cb_count)
-		op->num_custom = g_file_ch_cb_count;
-	refresh_custom_rows(op);
-	save_custom_positions(op->num_custom);
 }
 
 void on_delete_custom_clicked(GtkWidget *widget, gpointer data) {
@@ -2115,15 +1895,15 @@ void on_add_custom_clicked(GtkWidget *widget, gpointer data) {
 	(void)widget;
 	struct output_panel *op = (struct output_panel *)data;
 
-	if (op->num_custom >= POS_CUSTOM_MAX) return;
+	if (op->num_custom >= 4) return; // 최대 4개
 
 	int c = op->num_custom;
 	custom_face_pos[c] = clamp_face(gtk_spin_button_get_value_as_int(GTK_SPIN_BUTTON(custom_id1_spin)));
 	custom_arm_pos[c]  = clamp_arm(gtk_spin_button_get_value_as_int(GTK_SPIN_BUTTON(custom_id2_spin)));
 
 	// 이름 레이블 업데이트 및 행 표시
-	char name_buf[48];
-	sprintf(name_buf, _("★ %s  (%d, %d)"), custom_slot_name(c), custom_face_pos[c], custom_arm_pos[c]);
+	char name_buf[32];
+	sprintf(name_buf, _("★ 커스텀 %d  (%d, %d)"), c + 1, custom_face_pos[c], custom_arm_pos[c]);
 	gtk_label_set_text(GTK_LABEL(op->custom_name_labels[c]), name_buf);
 	gtk_widget_set_no_show_all(op->custom_rows[c], FALSE); // 플래그 해제 후 표시
 	gtk_widget_show_all(op->custom_rows[c]);
@@ -2161,8 +1941,8 @@ void on_auto_measure_clicked(GtkWidget *widget, gpointer data) {
 	}
 	motor_ensure_torque_on();
 
-	// 레이블 초기화 (고정 6 + ch/cb)
-	int total = POS_FIXED_COUNT + op->num_custom;
+	// 레이블 초기화 (고정 4 + 추가된 커스텀)
+	int total = 4 + op->num_custom;
 	for (int i = 0; i < total; i++) {
 		gtk_label_set_text(GTK_LABEL(op->pos_labels[i]), _("Rate: -- s/d  |  Amp: --°  |  BE: -- ms"));
 	}
@@ -2184,7 +1964,7 @@ void on_auto_measure_clicked(GtkWidget *widget, gpointer data) {
 }
 
 // ── Watch Winder ─────────────────────────────────────────────────────
-// face/arm 인덱스: 9시=0 … 6시=3, (표시 ch)=4, (표시 cb)=5
+// face/arm_positions 인덱스: 9시=0, 12시=1, 3시=2, 6시=3
 /* 와인더는 밥 주기 용이므로 한 자세에 오래 멈추지 않게,
  * 정지 대기 시간은 0초(또는 최소)로 운용한다. */
 #define WINDER_DWELL_SEC 0
@@ -2194,7 +1974,7 @@ static void winder_move_to_step(struct output_panel *op) {
 	int total, pos_idx, p1, p2;
 
 	if (op->winder_preset == WINDER_PRESET_POSITIONAL) {
-		total = POS_FIXED_COUNT + op->num_custom;
+		total = 4 + op->num_custom;
 		if (total <= 0) total = 1;
 		pos_idx = op->winder_state % total;
 		get_positional_slot_face_arm(op, pos_idx, &p1, &p2);
@@ -2236,7 +2016,7 @@ static gboolean winder_tick(gpointer data) {
 	const WinderPreset *p = &winder_presets[op->winder_preset];
 	int total;
 	if (op->winder_preset == WINDER_PRESET_POSITIONAL)
-		total = POS_FIXED_COUNT + op->num_custom;
+		total = 4 + op->num_custom;
 	else if (op->winder_preset == WINDER_PRESET_CUSTOM_ONLY)
 		total = op->num_custom;
 	else
@@ -2331,14 +2111,14 @@ static void atv_append(GtkTextBuffer *buf, GtkTextIter *it,
 
 void generate_analysis(struct output_panel *op)
 {
-	int total = POS_FIXED_COUNT + op->num_custom;
+	int total = 4 + op->num_custom;
 	int count = 0;
 
 	double min_rate = 9999, max_rate = -9999;
 	double sum_rate = 0, sum_amp = 0, sum_be = 0;
 	int    min_idx = 0, max_idx = 0;
 
-	for (int i = 0; i < total && i < POS_TOTAL_SLOTS; i++) {
+	for (int i = 0; i < total && i < 8; i++) {
 		if (!op->pos_measured[i]) continue;
 		count++;
 		sum_rate += op->pos_rate[i];
@@ -2382,11 +2162,8 @@ void generate_analysis(struct output_panel *op)
 	const char *gname[]  = {"S", "A", "B", "C", "D", "E"};
 	const char *gtag[]   = {"tag_s","tag_a","tag_b","tag_c","tag_d","tag_e"};
 	const char *gstar[]  = {"★★★★★","★★★★☆","★★★☆☆","★★☆☆☆","★☆☆☆☆","☆☆☆☆☆"};
-	const char *pos_names[] = {
-		_("9시 (기본)"), _("12시"), _("3시"), _("6시"),
-		g_custom_label[0], g_custom_label[1],
-		_("커스텀 1"), _("커스텀 2"),
-	};
+	const char *pos_names[] = {_("9시 (기본)"), _("12시"), _("3시"), _("6시"),
+	                            _("커스텀 1"), _("커스텀 2"), _("커스텀 3"), _("커스텀 4")};
 
 	// ── 텍스트 버퍼 구성 ──────────────────────────────────────────────
 	GtkTextBuffer *buf = gtk_text_view_get_buffer(
@@ -2472,7 +2249,7 @@ void generate_analysis(struct output_panel *op)
 		_("  자세         레이트      진폭    비트에러\n"));
 	atv_append(buf,&it,"tag_sep",
 		"  ─────────────────────────────────────────\n");
-	for (int i = 0; i < total && i < POS_TOTAL_SLOTS; i++) {
+	for (int i = 0; i < total && i < 8; i++) {
 		if (!op->pos_measured[i]) continue;
 		{ char *ts = g_strdup_printf("  %-11s  %+6.1f s/d  %4.0f°   %.2f ms\n", pos_names[i], op->pos_rate[i], op->pos_amp[i], op->pos_be[i]); atv_append(buf,&it,"tag_pos", ts); g_free(ts); }
 	}
