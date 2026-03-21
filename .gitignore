@@ -1,0 +1,10 @@
+# 빌드 산출물
+*.o
+*.exe
+mrwatchmaker.exe
+src/.deps/
+
+# autotools 로컬 생성물(필요 시 autoreconf / configure 재실행)
+autom4te.cache/
+config.log
+config.status

@@ -10,15 +10,22 @@ src/config.o: src/config.c src/tg.h C:/msys64/ucrt64/include/stdio.h \
  C:/msys64/ucrt64/include/sec_api/stdio_s.h \
  C:/msys64/ucrt64/include/stdlib.h \
  C:/msys64/ucrt64/include/corecrt_wstdlib.h \
+ C:/msys64/ucrt64/lib/gcc/x86_64-w64-mingw32/15.2.0/include/limits.h \
+ C:/msys64/ucrt64/lib/gcc/x86_64-w64-mingw32/15.2.0/include/syslimits.h \
  C:/msys64/ucrt64/include/limits.h C:/msys64/ucrt64/include/crtdefs.h \
  C:/msys64/ucrt64/include/sec_api/stdlib_s.h \
  C:/msys64/ucrt64/include/malloc.h \
- C:/msys64/mingw64/lib/gcc/x86_64-w64-mingw32/15.2.0/include/mm_malloc.h \
+ C:/msys64/ucrt64/lib/gcc/x86_64-w64-mingw32/15.2.0/include/mm_malloc.h \
  C:/msys64/ucrt64/include/errno.h C:/msys64/ucrt64/include/string.h \
  C:/msys64/ucrt64/include/sec_api/string_s.h \
- C:/msys64/ucrt64/include/math.h C:/msys64/ucrt64/include/stdint.h \
+ C:/msys64/ucrt64/include/math.h \
+ C:/msys64/ucrt64/lib/gcc/x86_64-w64-mingw32/15.2.0/include/stdint.h \
+ C:/msys64/ucrt64/include/stdint.h \
+ C:/msys64/ucrt64/lib/gcc/x86_64-w64-mingw32/15.2.0/include/stddef.h \
  C:/msys64/ucrt64/include/stddef.h C:/msys64/ucrt64/include/complex.h \
- C:/msys64/ucrt64/include/fftw3.h C:/msys64/ucrt64/include/stdarg.h \
+ C:/msys64/ucrt64/include/fftw3.h \
+ C:/msys64/ucrt64/lib/gcc/x86_64-w64-mingw32/15.2.0/include/stdarg.h \
+ C:/msys64/ucrt64/include/stdarg.h \
  C:/msys64/ucrt64/include/_mingw_stdarg.h \
  C:/msys64/ucrt64/include/gtk-3.0/gtk/gtk.h \
  C:/msys64/ucrt64/include/gtk-3.0/gdk/gdk.h \
@@ -28,6 +35,7 @@ src/config.o: src/config.c src/tg.h C:/msys64/ucrt64/include/stdio.h \
  C:/msys64/ucrt64/include/glib-2.0/glib/gtypes.h \
  C:/msys64/ucrt64/lib/glib-2.0/include/glibconfig.h \
  C:/msys64/ucrt64/include/glib-2.0/glib/gmacros.h \
+ C:/msys64/ucrt64/lib/gcc/x86_64-w64-mingw32/15.2.0/include/float.h \
  C:/msys64/ucrt64/include/float.h \
  C:/msys64/ucrt64/include/glib-2.0/glib/gversionmacros.h \
  C:/msys64/ucrt64/include/glib-2.0/glib/glib-visibility.h \
@@ -716,19 +724,24 @@ C:/msys64/ucrt64/include/swprintf.inl:
 C:/msys64/ucrt64/include/sec_api/stdio_s.h:
 C:/msys64/ucrt64/include/stdlib.h:
 C:/msys64/ucrt64/include/corecrt_wstdlib.h:
+C:/msys64/ucrt64/lib/gcc/x86_64-w64-mingw32/15.2.0/include/limits.h:
+C:/msys64/ucrt64/lib/gcc/x86_64-w64-mingw32/15.2.0/include/syslimits.h:
 C:/msys64/ucrt64/include/limits.h:
 C:/msys64/ucrt64/include/crtdefs.h:
 C:/msys64/ucrt64/include/sec_api/stdlib_s.h:
 C:/msys64/ucrt64/include/malloc.h:
-C:/msys64/mingw64/lib/gcc/x86_64-w64-mingw32/15.2.0/include/mm_malloc.h:
+C:/msys64/ucrt64/lib/gcc/x86_64-w64-mingw32/15.2.0/include/mm_malloc.h:
 C:/msys64/ucrt64/include/errno.h:
 C:/msys64/ucrt64/include/string.h:
 C:/msys64/ucrt64/include/sec_api/string_s.h:
 C:/msys64/ucrt64/include/math.h:
+C:/msys64/ucrt64/lib/gcc/x86_64-w64-mingw32/15.2.0/include/stdint.h:
 C:/msys64/ucrt64/include/stdint.h:
+C:/msys64/ucrt64/lib/gcc/x86_64-w64-mingw32/15.2.0/include/stddef.h:
 C:/msys64/ucrt64/include/stddef.h:
 C:/msys64/ucrt64/include/complex.h:
 C:/msys64/ucrt64/include/fftw3.h:
+C:/msys64/ucrt64/lib/gcc/x86_64-w64-mingw32/15.2.0/include/stdarg.h:
 C:/msys64/ucrt64/include/stdarg.h:
 C:/msys64/ucrt64/include/_mingw_stdarg.h:
 C:/msys64/ucrt64/include/gtk-3.0/gtk/gtk.h:
@@ -739,6 +752,7 @@ C:/msys64/ucrt64/include/glib-2.0/glib/galloca.h:
 C:/msys64/ucrt64/include/glib-2.0/glib/gtypes.h:
 C:/msys64/ucrt64/lib/glib-2.0/include/glibconfig.h:
 C:/msys64/ucrt64/include/glib-2.0/glib/gmacros.h:
+C:/msys64/ucrt64/lib/gcc/x86_64-w64-mingw32/15.2.0/include/float.h:
 C:/msys64/ucrt64/include/float.h:
 C:/msys64/ucrt64/include/glib-2.0/glib/gversionmacros.h:
 C:/msys64/ucrt64/include/glib-2.0/glib/glib-visibility.h:

@@ -1,0 +1,18 @@
+# MrWatchmaker — exe와 같은 폴더에 두고 편집
+# custom_labels: 고정 5·6번(윗면/아랫면 자리) 표시 이름
+custom_labels ch cb
+
+# 1번(ID1 Face) 틱 제한 / 2번(ID2 Arm) 틱 제한
+face_lim 0 4087
+arm_lim 800 2911
+
+# 스핀 기본값 참고 (Face, Arm) — 시작 위치는 실행 시 서보 Present로 잡힘
+spin 2054 1940
+
+# 고정 6자세: 9시 → … → (cb). 각 줄 face arm
+954 1797
+4041 1860
+2987 1860
+1954 1860
+2014 803
+4051 845

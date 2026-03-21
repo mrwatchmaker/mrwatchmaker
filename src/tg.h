@@ -204,17 +204,18 @@ struct output_panel {
 	GtkWidget *paperstrip_drawing_area;
 	GtkWidget *clear_button;
 
-	// Positional error labels (0-3: fixed, 4-7: custom)
+	// Positional error: 0~5 고정 6자세(9·12·3·6·ch·cb), 6~7 추가 커스텀
 	GtkWidget *pos_labels[8];
-	GtkWidget *custom_name_labels[4]; // 커스텀 행 이름 레이블
-	GtkWidget *custom_rows[4];        // 커스텀 행 전체 (show/hide)
-	int num_custom;                   // 추가된 커스텀 자세 수 (0~4)
+	GtkWidget *pos_coord_labels[6]; /* 고정 6자세: 목표 틱 Face/Arm */
+	GtkWidget *custom_name_labels[2];
+	GtkWidget *custom_rows[2];
+	int num_custom;                   // 0~2 (커스텀 1·2)
 	GtkWidget *auto_measure_button;
 	int auto_measure_state;
 	guint auto_measure_timer;
 	int auto_measure_countdown;
 	// 수동 자세별 측정(버튼)
-	GtkWidget *manual_measure_buttons[8]; // 0..3=고정(9/12/3/6), 4..7=커스텀 1..4
+	GtkWidget *manual_measure_buttons[8]; // 0..5=고정 6자세, 6..7=추가 커스텀
 	int manual_measure_target;            // -1=비활성, 0..7=타겟
 	int manual_measure_countdown;         // 초 카운트다운
 	guint manual_measure_timer;
@@ -240,10 +241,10 @@ struct output_panel {
 	// 자세차 측정 진단 리포트
 	GtkWidget *analysis_scroll;    // 스크롤 컨테이너
 	GtkWidget *analysis_textview;  // 분석 텍스트뷰
-	double  pos_rate[8];           // 자세별 레이트 (s/d)
-	double  pos_amp[8];            // 자세별 진폭 (°)
-	double  pos_be[8];             // 자세별 비트에러 (ms)
-	int     pos_measured[8];       // 측정 완료 여부
+	double  pos_rate[6];           // 자세별 레이트 (s/d)
+	double  pos_amp[6];            // 자세별 진폭 (°)
+	double  pos_be[6];             // 자세별 비트에러 (ms)
+	int     pos_measured[6];       // 측정 완료 여부
 
 #ifdef DEBUG
 	GtkWidget *debug_drawing_area;
@@ -290,6 +291,9 @@ struct main_window {
 	int cal; // 0.1 s/d
 	int nominal_sr;
 	int lang;
+	/* Android VisualCalibrationStore와 동일: 시계 9시 기준 Face/Arm Δ(틱) */
+	int visual_delta_face;
+	int visual_delta_arm;
 
 	GKeyFile *config_file;
 	gchar *config_file_name;
@@ -314,7 +318,9 @@ void error(char *format,...);
 	OP(lift_angle, la, double) \
 	OP(calibration, cal, int) \
 	OP(light_algorithm, is_light, int) \
-	OP(language, lang, int)
+	OP(language, lang, int) \
+	OP(visual_delta_face, visual_delta_face, int) \
+	OP(visual_delta_arm, visual_delta_arm, int)
 
 struct conf_data {
 #define DEF(NAME,PLACE,TYPE) TYPE PLACE;

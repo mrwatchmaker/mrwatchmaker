@@ -433,6 +433,7 @@ static GtkWidget *make_tab_label(char *name, struct output_panel *panel_to_close
 static void add_new_tab(struct snapshot *s, char *name, struct main_window *w)
 {
 	struct output_panel *op = init_output_panel(NULL, s, 5);
+	g_object_set_data(G_OBJECT(op->panel), "main-window", w);
 	GtkWidget *label = make_tab_label(name, op);
 	gtk_widget_show_all(op->panel);
 
@@ -1134,6 +1135,8 @@ static void start_interface(GApplication* app, void *p)
 	w->calibrate = 0;
 	w->is_light = 0;
 	w->lang = -1;
+	w->visual_delta_face = 0;
+	w->visual_delta_arm = 0;
 
 	load_config(w);
 	i18n_init(w->lang);
@@ -1159,6 +1162,8 @@ static void start_interface(GApplication* app, void *p)
 	compute_results(w->active_snapshot);
 
 	w->active_panel = init_output_panel(w->computer, w->active_snapshot, 0);
+	g_object_set_data(G_OBJECT(w->active_panel->panel), "main-window", w);
+	motor_set_visual_goal_deltas(w->visual_delta_face, w->visual_delta_arm);
 
 	init_main_window(w);
 
