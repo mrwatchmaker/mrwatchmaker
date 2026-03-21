@@ -204,17 +204,17 @@ struct output_panel {
 	GtkWidget *paperstrip_drawing_area;
 	GtkWidget *clear_button;
 
-	// Positional error labels (0-3: fixed, 4-7: custom)
+	// Positional error: 0~5 고정 6자세(9·12·3·6·ch·cb), 6~7 추가 커스텀
 	GtkWidget *pos_labels[8];
-	GtkWidget *custom_name_labels[4]; // 커스텀 행 이름 레이블
-	GtkWidget *custom_rows[4];        // 커스텀 행 전체 (show/hide)
-	int num_custom;                   // 추가된 커스텀 자세 수 (0~4)
+	GtkWidget *custom_name_labels[2];
+	GtkWidget *custom_rows[2];
+	int num_custom;                   // 0~2 (커스텀 1·2)
 	GtkWidget *auto_measure_button;
 	int auto_measure_state;
 	guint auto_measure_timer;
 	int auto_measure_countdown;
 	// 수동 자세별 측정(버튼)
-	GtkWidget *manual_measure_buttons[8]; // 0..3=고정(9/12/3/6), 4..7=커스텀 1..4
+	GtkWidget *manual_measure_buttons[8]; // 0..5=고정 6자세, 6..7=추가 커스텀
 	int manual_measure_target;            // -1=비활성, 0..7=타겟
 	int manual_measure_countdown;         // 초 카운트다운
 	guint manual_measure_timer;
