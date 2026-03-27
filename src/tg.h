@@ -211,6 +211,8 @@ struct output_panel {
 	GtkWidget *custom_rows[2];
 	int num_custom;                   // 0~2 (커스텀 1·2)
 	GtkWidget *auto_measure_button;
+	/* 기준점 미세조정 행: Present 기준 논리틱 Face/Arm 표시 */
+	GtkWidget *micro_motor_readout_label;
 	int auto_measure_state;
 	guint auto_measure_timer;
 	int auto_measure_countdown;
@@ -230,6 +232,7 @@ struct output_panel {
 	int winder_cycles;    // 완료된 순환 횟수
 	int winder_preset;    // 선택된 프리셋 인덱스
 	int winder_tick_ms;   // winder tick 간격(ms)
+	guint winder_timeout_id; /* g_timeout_add_seconds(winder_tick) — 종료 시 제거 */
 
 	/* 와인더 연속 궤적(trajectory) */
 	int winder_serial_open;     // 시리얼 열림 여부
@@ -259,6 +262,8 @@ void redraw_op(struct output_panel *op);
 void op_set_snapshot(struct output_panel *op, struct snapshot *snst);
 void op_set_border(struct output_panel *op, int i);
 void op_destroy(struct output_panel *op);
+/* 프로그램 종료 직전: 와인더 타이머 정지 후 🕘9시(기본)로 이동·토크 해제 (op 해제 전에 호출) */
+void op_shutdown_motor_home_9h(struct output_panel *op);
 
 /* interface.c */
 struct main_window {

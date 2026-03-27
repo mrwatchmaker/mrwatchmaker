@@ -344,20 +344,20 @@ distuninstallcheck_listfiles = find . -type f -print
 am__distuninstallcheck_listfiles = $(distuninstallcheck_listfiles) \
   | sed 's|^\./|$(prefix)/|' | grep -v '$(infodir)/dir$$'
 distcleancheck_listfiles = find . -type f -print
-ACLOCAL = ${SHELL} /c/Users/USER/Desktop/mrwatchmaker/missing aclocal-1.15
+ACLOCAL = ${SHELL} /c/Users/USER/Desktop/watch_time/mrwatchmaker/missing aclocal-1.15
 AMTAR = $${TAR-tar}
 AM_DEFAULT_VERBOSITY = 1
 AM_LDFLAGS = -Wl,--as-needed
-AUTOCONF = ${SHELL} /c/Users/USER/Desktop/mrwatchmaker/missing autoconf
-AUTOHEADER = ${SHELL} /c/Users/USER/Desktop/mrwatchmaker/missing autoheader
-AUTOMAKE = ${SHELL} /c/Users/USER/Desktop/mrwatchmaker/missing automake-1.15
+AUTOCONF = ${SHELL} /c/Users/USER/Desktop/watch_time/mrwatchmaker/missing autoconf
+AUTOHEADER = ${SHELL} /c/Users/USER/Desktop/watch_time/mrwatchmaker/missing autoheader
+AUTOMAKE = ${SHELL} /c/Users/USER/Desktop/watch_time/mrwatchmaker/missing automake-1.15
 AWK = gawk
 CC = gcc
 CCDEPMODE = depmode=gcc3
 CFLAGS = -g -O2 -Wall -Wextra
 CPPFLAGS = 
 CYGPATH_W = cygpath -w
-DEFS = -DHAVE_LIBPTHREAD=1 -DHAVE_LIBM=1
+DEFS = -DPACKAGE_NAME=\"MrWatchmaker\" -DPACKAGE_TARNAME=\"mrwatchmaker\" -DPACKAGE_VERSION=\"1.0\" -DPACKAGE_STRING=\"MrWatchmaker\ 1.0\" -DPACKAGE_BUGREPORT=\"vacaboja@gmail.com\" -DPACKAGE_URL=\"https://github.com/vacaboja/tg\" -DPACKAGE=\"mrwatchmaker\" -DVERSION=\"1.0\" -DHAVE_LIBPTHREAD=1 -DHAVE_LIBM=1
 DEPDIR = .deps
 ECHO_C = 
 ECHO_N = -n
@@ -382,7 +382,7 @@ LIBS = $(GTK_LIBS) \
        -lm
 
 LTLIBOBJS = 
-MAKEINFO = ${SHELL} /c/Users/USER/Desktop/mrwatchmaker/missing makeinfo
+MAKEINFO = ${SHELL} /c/Users/USER/Desktop/watch_time/mrwatchmaker/missing makeinfo
 MKDIR_P = /usr/bin/mkdir -p
 OBJEXT = o
 PACKAGE = mrwatchmaker
@@ -403,10 +403,10 @@ SHELL = /bin/sh
 STRIP = 
 VERSION = 1.0
 WINDRES = windres
-abs_builddir = /c/Users/USER/Desktop/mrwatchmaker
-abs_srcdir = /c/Users/USER/Desktop/mrwatchmaker
-abs_top_builddir = /c/Users/USER/Desktop/mrwatchmaker
-abs_top_srcdir = /c/Users/USER/Desktop/mrwatchmaker
+abs_builddir = /c/Users/USER/Desktop/watch_time/mrwatchmaker
+abs_srcdir = /c/Users/USER/Desktop/watch_time/mrwatchmaker
+abs_top_builddir = /c/Users/USER/Desktop/watch_time/mrwatchmaker
+abs_top_srcdir = /c/Users/USER/Desktop/watch_time/mrwatchmaker
 ac_ct_CC = gcc
 am__include = include
 am__leading_dot = .
@@ -414,7 +414,7 @@ am__quote =
 am__tar = $${TAR-tar} chof - "$$tardir"
 am__untar = $${TAR-tar} xf -
 bindir = ${exec_prefix}/bin
-build_alias = x86_64-w64-mingw32
+build_alias = x86_64-pc-cygwin
 builddir = .
 datadir = ${datarootdir}
 datarootdir = ${prefix}/share
@@ -425,7 +425,7 @@ host_alias =
 htmldir = ${docdir}
 includedir = ${prefix}/include
 infodir = ${datarootdir}/info
-install_sh = ${SHELL} /c/Users/USER/Desktop/mrwatchmaker/install-sh
+install_sh = ${SHELL} /c/Users/USER/Desktop/watch_time/mrwatchmaker/install-sh
 libdir = ${exec_prefix}/lib
 libexecdir = ${exec_prefix}/libexec
 localedir = ${datarootdir}/locale
@@ -434,7 +434,7 @@ mandir = ${datarootdir}/man
 mkdir_p = $(MKDIR_P)
 oldincludedir = /usr/include
 pdfdir = ${docdir}
-prefix = /mingw64
+prefix = /usr
 program_transform_name = s,x,x,
 psdir = ${docdir}
 sbindir = ${exec_prefix}/sbin
@@ -481,7 +481,8 @@ EXTRA_DIST = autogen.sh \
 	     icons \
 	     packaging \
 	     LICENSE \
-	     README.md
+	     README.md \
+	     reference_9oclock.png
 
 
 # 회사 가져갈 폴더: mrwatchmaker.exe + README 등
@@ -1665,6 +1666,7 @@ valgrind: mrwatchmaker-vlg
 office: all
 	@rm -rf $(OFFICE_DIR) && mkdir -p $(OFFICE_DIR)
 	@cp -f mrwatchmaker$(EXEEXT) $(OFFICE_DIR)/mrwatchmaker$(EXEEXT) 2>/dev/null || true
+	@cp -f reference_9oclock.png $(OFFICE_DIR)/ 2>/dev/null || true
 	@cp -f README.md $(OFFICE_DIR)/ 2>/dev/null || cp -f ../README.md $(OFFICE_DIR)/ 2>/dev/null || true
 	@cp -f LICENSE $(OFFICE_DIR)/ 2>/dev/null || cp -f ../LICENSE $(OFFICE_DIR)/ 2>/dev/null || true
 	@test -f port.conf && cp -f port.conf $(OFFICE_DIR)/ || echo "5" > $(OFFICE_DIR)/port.conf

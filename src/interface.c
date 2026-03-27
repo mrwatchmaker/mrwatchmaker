@@ -153,6 +153,8 @@ static void on_shutdown(GApplication *app, void *p)
 	struct main_window *w = g_object_get_data(G_OBJECT(app), "main-window");
 	if(w) {
 		save_config(w);
+		if (w->active_panel)
+			op_shutdown_motor_home_9h(w->active_panel);
 		computer_destroy(w->computer);
 		op_destroy(w->active_panel);
 		close_config(w);

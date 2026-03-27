@@ -72,7 +72,8 @@ EXTRA_DIST = autogen.sh \
 	     icons \
 	     packaging \
 	     LICENSE \
-	     README.md
+	     README.md \
+	     reference_9oclock.png
 
 .rc.o:
 	$(WINDRES) $< -O coff -o $@
@@ -90,6 +91,7 @@ OFFICE_DIR = 회사가져갈_MrWatchmaker
 office: all
 	@rm -rf $(OFFICE_DIR) && mkdir -p $(OFFICE_DIR)
 	@cp -f mrwatchmaker$(EXEEXT) $(OFFICE_DIR)/mrwatchmaker$(EXEEXT) 2>/dev/null || true
+	@cp -f reference_9oclock.png $(OFFICE_DIR)/ 2>/dev/null || true
 	@cp -f README.md $(OFFICE_DIR)/ 2>/dev/null || cp -f ../README.md $(OFFICE_DIR)/ 2>/dev/null || true
 	@cp -f LICENSE $(OFFICE_DIR)/ 2>/dev/null || cp -f ../LICENSE $(OFFICE_DIR)/ 2>/dev/null || true
 	@test -f port.conf && cp -f port.conf $(OFFICE_DIR)/ || echo "5" > $(OFFICE_DIR)/port.conf

@@ -482,7 +482,15 @@ void motor_disable_torque_all(void) {
         motor_io_unlock();
         return;
     }
+    /* ID2(암)가 간헐적으로 한 번에 안 풀리는 경우가 있어 반복 OFF를 보낸다. */
     motor_write_byte(1, 0x28, 0);
+    Sleep(10);
+    for (int k = 0; k < 8; k++) {
+        motor_write_byte(2, 0x28, 0);
+        Sleep(8);
+    }
+    motor_write_word(2, 48, 0);
+    Sleep(8);
     motor_write_byte(2, 0x28, 0);
     motor_io_unlock();
 }
