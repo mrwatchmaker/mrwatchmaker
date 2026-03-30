@@ -94,9 +94,10 @@ static int micro_adj_base_arm = 0;
 static int micro_adj_base_valid = 0;
 
 #define MICRO_STEP_FACE 50
-#define MICRO_STEP_ARM  12
-/* 미세조정 전용: calc_duration()은 최소 5초라 버튼 반응이 너무 느림 → 짧은 고정 이동 시간 */
-#define MICRO_NUDGE_MOVE_MS 420
+/* ARM은 Face 대비 틱당 체감/데드밴드가 커서 너무 작으면 "가끔 안 되는" 현상이 생김 */
+#define MICRO_STEP_ARM  20
+/* 초안전 모드: 미세조정도 느리게 움직여 기어 충격을 줄임 */
+#define MICRO_NUDGE_MOVE_MS 700
 #define MICRO_HOLD_GAP_US   75000U
 
 enum {
@@ -1502,14 +1503,10 @@ struct output_panel *init_output_panel(struct computer *comp, struct snapshot *s
 // 고정 자세 좌표·제한·스핀 기본값은 mrwatchmaker_coords.txt (exe 폴더) 참고
 
 static int clamp_face_hard(int v) {
-	if (v < g_face_min) return g_face_min;
-	if (v > g_face_max) return g_face_max;
-	return v;
+	return norm4096_pc(v);
 }
 static int clamp_arm_hard(int v) {
-	if (v < g_arm_min) return g_arm_min;
-	if (v > g_arm_max) return g_arm_max;
-	return v;
+	return norm4096_pc(v);
 }
 
 static int clamp_face_soft(int v) {
@@ -1764,11 +1761,11 @@ static void auto_measure_set_button_countdown_label(struct output_panel *op)
 	gtk_button_set_label(GTK_BUTTON(op->auto_measure_button), buf);
 }
 
-// 이동 거리에 따라 속도를 자동 계산 (최소 5초, 거리가 클수록 더 느리게)
+// 초안전 모드: 이동 거리를 더 길게 잡아 충격 완화
 static int calc_duration(int from, int to) {
 	int dist = from - to;
 	if (dist < 0) dist = -dist;
-	int ms = 5000 + (dist * 3); // 거리 1당 3ms 추가 (최소 5초)
+	int ms = 7000 + (dist * 4);
 	if (ms > 12000) ms = 12000; // 최대 12초
 	return ms;
 }
@@ -1776,10 +1773,95 @@ static int calc_duration(int from, int to) {
 /* 상시 토크 해제 기조를 유지하되, 실제 이동/미세조정 직전에는
  * 일시적으로 토크를 복구해야 암/페이스가 모두 반응한다. */
 static void motor_ensure_torque_on(void) {
+	/* 초안전 모드: addr 48 토크 제한 10% */
+	const int TORQUE_LIMIT_ULTRA_SAFE = 100;
 	motor_write_byte(1, 0x28, 1); /* Torque Enable = 1 */
 	motor_write_byte(2, 0x28, 1); /* Torque Enable = 1 */
-	motor_write_word(1, 48, 1000);
-	motor_write_word(2, 48, 1000);
+	motor_write_word(1, 48, TORQUE_LIMIT_ULTRA_SAFE);
+	motor_write_word(2, 48, TORQUE_LIMIT_ULTRA_SAFE);
+}
+
+#define STALL_CHECK_SETTLE_MS 150
+#define STALL_CHECK_MIN_COMMAND_DISTANCE_TICKS 50
+#define STALL_CHECK_MIN_PROGRESS_TICKS 8
+#define STALL_PROTECTION_COOLDOWN_MS 4500
+static gint64 g_stall_protection_cooldown_until_ms = 0;
+
+static gint64 now_ms_mono(void)
+{
+	return g_get_monotonic_time() / 1000;
+}
+
+static int circular_dist_4096(int a, int b)
+{
+	int d = a - b;
+	if (d < 0) d = -d;
+	d %= 4096;
+	if (d > 2048) d = 4096 - d;
+	return d;
+}
+
+static int axis_stalled(int before_raw, int after_raw, int target_raw)
+{
+	if (before_raw < 0 || after_raw < 0) return 0;
+	before_raw = norm4096_pc(before_raw);
+	after_raw = norm4096_pc(after_raw);
+	target_raw = norm4096_pc(target_raw);
+	int before_dist = circular_dist_4096(before_raw, target_raw);
+	if (before_dist < STALL_CHECK_MIN_COMMAND_DISTANCE_TICKS) return 0;
+	int after_dist = circular_dist_4096(after_raw, target_raw);
+	int progress = before_dist - after_dist;
+	return (progress < STALL_CHECK_MIN_PROGRESS_TICKS) ? 1 : 0;
+}
+
+typedef struct {
+	struct output_panel *op;
+	char msg[192];
+} stall_notice_packet_t;
+
+static gboolean stall_protect_notice_idle(gpointer data)
+{
+	stall_notice_packet_t *p = (stall_notice_packet_t *)data;
+	if (!p || !p->op || !p->op->panel) {
+		g_free(p);
+		return G_SOURCE_REMOVE;
+	}
+	GtkWidget *win = gtk_widget_get_toplevel(p->op->panel);
+	if (!GTK_IS_WINDOW(win)) win = NULL;
+	GtkWidget *dlg = gtk_message_dialog_new(GTK_WINDOW(win),
+		GTK_DIALOG_MODAL, GTK_MESSAGE_WARNING, GTK_BUTTONS_OK, "%s", p->msg);
+	gtk_window_set_title(GTK_WINDOW(dlg), _("안전 보호 발동"));
+	if (win) gtk_window_set_transient_for(GTK_WINDOW(dlg), GTK_WINDOW(win));
+	gtk_dialog_run(GTK_DIALOG(dlg));
+	gtk_widget_destroy(dlg);
+	g_free(p);
+	return G_SOURCE_REMOVE;
+}
+
+static void stall_protect_trigger(struct output_panel *op, const char *reason)
+{
+	gint64 now = now_ms_mono();
+	g_stall_protection_cooldown_until_ms = now + STALL_PROTECTION_COOLDOWN_MS;
+	/* 즉시 완전 해제: Limit 0 + Torque OFF (양축) */
+	motor_write_word(1, 48, 0);
+	g_usleep(35000);
+	motor_write_word(2, 48, 0);
+	g_usleep(35000);
+	motor_write_byte(1, 0x28, 0);
+	g_usleep(35000);
+	motor_write_byte(2, 0x28, 0);
+	if (reason)
+		g_message("STALL PROTECT: torque off, cooldown=%dms, %s", STALL_PROTECTION_COOLDOWN_MS, reason);
+	else
+		g_message("STALL PROTECT: torque off, cooldown=%dms", STALL_PROTECTION_COOLDOWN_MS);
+	if (op) {
+		stall_notice_packet_t *pkt = g_new0(stall_notice_packet_t, 1);
+		pkt->op = op;
+		snprintf(pkt->msg, sizeof(pkt->msg),
+			_("기구 막힘이 감지되어 토크를 완전 해제했습니다.\n약 %.1f초 후 다시 시도하세요."),
+			STALL_PROTECTION_COOLDOWN_MS / 1000.0);
+		g_idle_add(stall_protect_notice_idle, pkt);
+	}
 }
 
 #define ARM_RELEASE_POLL_MS 250
@@ -1878,19 +1960,41 @@ static void motor_return_to_9h_pose_inner(struct output_panel *op_for_label_idle
 	arm_release_live_poll_stop();
 	if (!motor_init(motor_get_port()))
 		return;
+	if (now_ms_mono() < g_stall_protection_cooldown_until_ms) {
+		motor_disable_torque_all();
+		motor_close();
+		return;
+	}
 	motor_ensure_torque_on();
 	dur1 = calc_duration(last_pos1, p1);
 	dur2 = calc_duration(last_pos2, p2);
+	int before1 = motor_read_present_position(1);
+	int before2 = motor_read_present_position(2);
+	if (before1 < 0) before1 = last_pos1;
+	if (before2 < 0) before2 = last_pos2;
 	motor_move(1, p1, dur1, 0);
 	g_usleep(100000);
 	/* cb -> 9시 복귀에서 ID2(암) 명령이 간헐적으로 씹히는 경우를 줄이기 위해
 	 * 암 토크를 한 번 더 확실히 올리고 이동 명령을 보강한다. */
 	motor_write_byte(2, 0x28, 1);
-	motor_write_word(2, 48, 1000);
+	motor_write_word(2, 48, 100);
 	motor_move(2, p2, dur2, 0);
 	g_usleep(120000);
 	motor_move(2, p2, dur2, 0);
 	g_usleep((dur2 > dur1 ? dur2 : dur1) * 1000);
+	/* 막힘/무진행 보호 */
+	{
+		g_usleep(STALL_CHECK_SETTLE_MS * 1000);
+		int after1 = motor_read_present_position(1);
+		int after2 = motor_read_present_position(2);
+		int s1 = axis_stalled(before1, after1, p1);
+		int s2 = axis_stalled(before2, after2, p2);
+		if (s1 || s2) {
+			stall_protect_trigger(op_for_label_idle, "return_to_9h");
+			motor_close();
+			return;
+		}
+	}
 	/* 최종 9시 복귀 도착 확인: 오차가 크면 한 번 더 보정 이동 */
 	{
 		int r1_chk = motor_read_present_position(1);
@@ -1909,7 +2013,7 @@ static void motor_return_to_9h_pose_inner(struct output_panel *op_for_label_idle
 			motor_move(1, p1, retry1, 0);
 			g_usleep(100000);
 			motor_write_byte(2, 0x28, 1);
-			motor_write_word(2, 48, 1000);
+			motor_write_word(2, 48, 100);
 			motor_move(2, p2, retry2, 0);
 			g_usleep((retry2 > retry1 ? retry2 : retry1) * 1000);
 		}
@@ -2063,11 +2167,35 @@ static gpointer manual_move_thread_func(gpointer data) {
 	int dur2 = calc_duration(last_pos2, p2);
 
 	motor_init(motor_get_port());
+	if (now_ms_mono() < g_stall_protection_cooldown_until_ms) {
+		motor_disable_torque_all();
+		motor_close();
+		/* 이동 후 메인 스레드에서 카운트다운 시작은 하지 않음 */
+		g_free(md);
+		return NULL;
+	}
 	motor_ensure_torque_on();
+	int before1 = motor_read_present_position(1);
+	int before2 = motor_read_present_position(2);
+	if (before1 < 0) before1 = last_pos1;
+	if (before2 < 0) before2 = last_pos2;
 	motor_move(1, p1, dur1, 0);
 	g_usleep(100000);
 	motor_move(2, p2, dur2, 0);
 	g_usleep((dur2 > dur1 ? dur2 : dur1) * 1000);
+	{
+		g_usleep(STALL_CHECK_SETTLE_MS * 1000);
+		int after1 = motor_read_present_position(1);
+		int after2 = motor_read_present_position(2);
+		int s1 = axis_stalled(before1, after1, p1);
+		int s2 = axis_stalled(before2, after2, p2);
+		if (s1 || s2) {
+			stall_protect_trigger(md->op, "manual_move");
+			motor_close();
+			g_free(md);
+			return NULL;
+		}
+	}
 	motor_disable_torque_all();
 	motor_close();
 
@@ -2220,6 +2348,7 @@ static gpointer micro_rep_worker(gpointer unused)
 	int k;
 	struct output_panel *op;
 	int motor_opened = 0;
+	int consecutive_present_fail = 0;
 
 	g_mutex_lock(&micro_rep_mutex);
 	k = micro_rep_kind;
@@ -2260,21 +2389,54 @@ static gpointer micro_rep_worker(gpointer unused)
 		int rF, rA;
 		if (!micro_read_both_present_fast(&rF, &rA)) {
 			/* 실측을 못 읽은 상태에서는 목표값 기반으로 점프시키지 않는다.
-			 * 다음 루프에서 재시도하도록 하고 현재 값은 유지한다. */
+			 * 그런데 연속 실패가 누적되면 시리얼 응답이 꼬여 복구가 안 될 수 있음.
+			 * 일정 횟수 이상이면 자동으로 시리얼을 재오픈해 복구 시도. */
+			consecutive_present_fail++;
+			if (consecutive_present_fail >= 8) {
+				consecutive_present_fail = 0;
+				motor_disable_torque_all();
+				motor_close();
+				motor_opened = 0;
+				if (!motor_init(motor_get_port())) {
+					schedule_servo_connect_error_dialog_once(op);
+					micro_rep_stop();
+					break;
+				}
+				motor_opened = 1;
+				motor_ensure_torque_on();
+				/* 재오픈 직후 버스 안정화 */
+				g_usleep(25000);
+			}
 			g_usleep(MICRO_HOLD_GAP_US);
 			continue;
 		}
+		consecutive_present_fail = 0;
 		int vdF = mw->visual_delta_face;
 		int vdA = mw->visual_delta_arm;
 		int lf = logical_face_from_raw(rF, vdF);
 		int la = logical_arm_from_raw(rA, vdA);
 
 		if (k == MICRO_REP_FACE_M || k == MICRO_REP_FACE_P) {
+			if (now_ms_mono() < g_stall_protection_cooldown_until_ms) {
+				motor_disable_torque_all();
+				g_usleep(120000);
+				continue;
+			}
 			int step = (k == MICRO_REP_FACE_M) ? -MICRO_STEP_FACE : MICRO_STEP_FACE;
 			int next_lf = clamp_face_hard(norm4096_pc(lf + step));
+			int beforeF = motor_read_present_position(1);
+			if (beforeF < 0) beforeF = last_pos1;
 			motor_move(1, next_lf, MICRO_NUDGE_MOVE_MS, 0);
 			g_usleep(35000);
 			motor_move(2, la, 280, 0);
+			g_usleep(STALL_CHECK_SETTLE_MS * 1000);
+			{
+				int afterF = motor_read_present_position(1);
+				if (axis_stalled(beforeF, afterF, next_lf)) {
+					stall_protect_trigger(op, "micro_face");
+					continue;
+				}
+			}
 			{
 				int rrF = motor_read_present_position(1);
 				int rrA = motor_read_present_position(2);
@@ -2291,13 +2453,32 @@ static gpointer micro_rep_worker(gpointer unused)
 				}
 			}
 		} else if (k == MICRO_REP_ARM_M || k == MICRO_REP_ARM_P) {
+			if (now_ms_mono() < g_stall_protection_cooldown_until_ms) {
+				motor_disable_torque_all();
+				g_usleep(120000);
+				continue;
+			}
 			int step = (k == MICRO_REP_ARM_M) ? -MICRO_STEP_ARM : MICRO_STEP_ARM;
 			int next_la = clamp_arm_hard(norm4096_pc(la + step));
 			/* ARM 홀드 미세조정 중에는 토크가 간헐적으로 풀려 입력이 끊길 수 있어
 			 * 매 반복마다 암 토크/리밋을 다시 복구한다. */
 			motor_write_byte(2, 0x28, 1);
-			motor_write_word(2, 48, 1000);
+			/* ARM 미세조정 반복 시에도 초안전 토크(10%) 유지 */
+			motor_write_word(2, 48, 100);
+			int beforeA = motor_read_present_position(2);
+			if (beforeA < 0) beforeA = last_pos2;
 			motor_move(2, next_la, MICRO_NUDGE_MOVE_MS, 0);
+			/* Face 쪽과 동일하게 약간 기다린 뒤 present를 읽어오면
+			 * ARM-only 타이밍 문제로 읽기 실패/동작 누락처럼 보이는 케이스를 줄임 */
+			g_usleep(35000);
+			g_usleep(STALL_CHECK_SETTLE_MS * 1000);
+			{
+				int afterA = motor_read_present_position(2);
+				if (axis_stalled(beforeA, afterA, next_la)) {
+					stall_protect_trigger(op, "micro_arm");
+					continue;
+				}
+			}
 			{
 				int rrF = motor_read_present_position(1);
 				int rrA = motor_read_present_position(2);
@@ -2593,6 +2774,12 @@ static void show_reference_9oclock_window(struct output_panel *op)
 	gtk_window_set_type_hint(GTK_WINDOW(dlg), GDK_WINDOW_TYPE_HINT_NORMAL);
 	gtk_window_set_focus_on_map(GTK_WINDOW(dlg), FALSE);
 	gtk_window_set_keep_above(GTK_WINDOW(dlg), FALSE);
+	/* Win32 등에서 콘텐츠가 세로로 늘어나 전체 화면처럼 보이는 것 방지 — 작은 고정 창 */
+	gtk_window_set_resizable(GTK_WINDOW(dlg), FALSE);
+	gtk_window_set_default_size(GTK_WINDOW(dlg), 440, 420);
+	/* 일부 환경에서 default size만으로는 과도하게 커질 수 있어 size request/resize도 같이 고정 */
+	gtk_widget_set_size_request(GTK_WIDGET(dlg), 440, 420);
+	gtk_window_resize(GTK_WINDOW(dlg), 440, 420);
 	g_object_set_data(G_OBJECT(dlg), REF9_PARENT_KEY, parent);
 	s_ref9_window = dlg;
 	g_signal_connect(dlg, "response", G_CALLBACK(on_ref9_dialog_response), NULL);
@@ -2615,7 +2802,8 @@ static void show_reference_9oclock_window(struct output_panel *op)
 	GtkWidget *content = gtk_dialog_get_content_area(GTK_DIALOG(dlg));
 	GtkWidget *vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 10);
 	gtk_container_set_border_width(GTK_CONTAINER(vbox), 12);
-	gtk_box_pack_start(GTK_BOX(content), vbox, TRUE, TRUE, 0);
+	/* TRUE,TRUE면 다이얼로그 영역을 세로로 꽉 채워 참고 이미지가 "전체화면"처럼 보일 수 있음 */
+	gtk_box_pack_start(GTK_BOX(content), vbox, FALSE, FALSE, 0);
 
 	const char *missing_txt =
 		_("참고 이미지를 찾을 수 없습니다.\n(reference_9oclock.png을 mrwatchmaker.exe와 같은 폴더에 두세요.)");
@@ -2625,8 +2813,8 @@ static void show_reference_9oclock_window(struct output_panel *op)
 		int shown = 0;
 
 		if (imgpath) {
-			/* 작게 표시해 ± 영역을 덜 가림 */
-			GdkPixbuf *pb = gdk_pixbuf_new_from_file_at_scale(imgpath, 380, 300, TRUE, &err);
+			/* 작게 표시해 ± 영역·메인 창을 덜 가림 (고해상도 PNG도 이 한도 안에 맞춤) */
+			GdkPixbuf *pb = gdk_pixbuf_new_from_file_at_scale(imgpath, 360, 280, TRUE, &err);
 			g_free(imgpath);
 			if (pb) {
 				GdkPixbuf *adj = ref9_pixbuf_whiten_light_background(pb);
@@ -2639,6 +2827,11 @@ static void show_reference_9oclock_window(struct output_panel *op)
 					gtk_widget_set_name(wrap, "ref9-photo-wrap");
 					GtkWidget *img = gtk_image_new_from_pixbuf(use);
 					g_object_unref(use);
+					gtk_widget_set_hexpand(wrap, FALSE);
+					gtk_widget_set_vexpand(wrap, FALSE);
+					gtk_widget_set_halign(wrap, GTK_ALIGN_CENTER);
+					gtk_widget_set_hexpand(img, FALSE);
+					gtk_widget_set_vexpand(img, FALSE);
 					gtk_container_add(GTK_CONTAINER(wrap), img);
 					gtk_box_pack_start(GTK_BOX(vbox), wrap, FALSE, FALSE, 0);
 					shown = 1;
@@ -2941,13 +3134,24 @@ void on_auto_measure_clicked(GtkWidget *widget, gpointer data) {
 #define WINDER_DWELL_SEC 0
 
 typedef struct {
+	struct output_panel *op;
 	int p1;
 	int p2;
-	int dur1;
-	int dur2;
+	int dur; /* Face/Arm 동시 종료 시간(ms) */
 } winder_move_args_t;
 
 static volatile gint s_winder_move_inflight = 0;
+static volatile gint s_winder_motor_opened = 0;
+
+static gboolean winder_return_to_9h_safe_idle(gpointer data) {
+	struct output_panel *op = (struct output_panel *)data;
+	if (!op) return G_SOURCE_REMOVE;
+	/* 이동 중이면 대기 (Stop 버튼 눌러도 winder 스레드가 끝날 때까지) */
+	if (g_atomic_int_get(&s_winder_move_inflight))
+		return G_SOURCE_CONTINUE;
+	motor_return_to_9h_pose(op);
+	return G_SOURCE_REMOVE;
+}
 
 static gpointer winder_move_thread_func(gpointer data)
 {
@@ -2957,16 +3161,30 @@ static gpointer winder_move_thread_func(gpointer data)
 		return NULL;
 	}
 
-	if (motor_init(motor_get_port())) {
+	/* 와인더는 끊기지 않고 계속 움직여야 하므로,
+	 * 각 스텝 종료마다 torque/serial을 끊지 않고,
+	 * Stop 눌러서 winder_active=0으로 바뀐 경우에만 정리한다. */
+	if (!g_atomic_int_get(&s_winder_motor_opened)) {
+		if (motor_init(motor_get_port())) {
+			s_winder_motor_opened = 1;
+		}
+	}
+
+	if (g_atomic_int_get(&s_winder_motor_opened)) {
 		motor_ensure_torque_on();
-		motor_move(1, a->p1, a->dur1, 0);
-		g_usleep(100000);
-		motor_move(2, a->p2, a->dur2, 0);
+		/* 같은 duration으로 두 서보를 동시에 시작해, 한쪽이 먼저 멈추는 느낌을 줄임 */
+		motor_move(1, a->p1, a->dur, 0);
+		motor_move(2, a->p2, a->dur, 0);
 		last_pos1 = a->p1;
 		last_pos2 = a->p2;
-		g_usleep((a->dur2 > a->dur1 ? a->dur2 : a->dur1) * 1000);
+		g_usleep(a->dur * 1000);
+	}
+
+	/* 정지 버튼을 누른 상태라면 여기서만 torque/serial을 정리 */
+	if (!a->op || !a->op->winder_active) {
 		motor_disable_torque_all();
 		motor_close();
+		s_winder_motor_opened = 0;
 	}
 
 	g_free(a);
@@ -2994,15 +3212,16 @@ static void winder_move_to_step(struct output_panel *op) {
 
 	int dur1 = winder_calc_duration(last_pos1, p1);
 	int dur2 = winder_calc_duration(last_pos2, p2);
+	int dur = (dur1 > dur2) ? dur1 : dur2;
 
 	if (g_atomic_int_get(&s_winder_move_inflight))
 		return;
 	{
 		winder_move_args_t *a = g_new(winder_move_args_t, 1);
+		a->op = op;
 		a->p1 = p1;
 		a->p2 = p2;
-		a->dur1 = dur1;
-		a->dur2 = dur2;
+		a->dur = dur;
 		g_atomic_int_set(&s_winder_move_inflight, 1);
 		g_thread_new("winder_move", winder_move_thread_func, a);
 	}
@@ -3051,9 +3270,8 @@ void on_winder_clicked(GtkWidget *widget, gpointer data) {
 		gtk_label_set_text(GTK_LABEL(op->winder_status_label), _("대기 중 — 프리셋을 선택하고 시작하세요"));
 		// 프리셋 콤보 다시 활성화
 		gtk_widget_set_sensitive(op->winder_preset_combo, TRUE);
-		g_atomic_int_set(&s_winder_move_inflight, 0);
 		/* 정지 후 🕘9시(기본)로 복귀 (토크 해제·기준점 표시 동기화는 motor_return_to_9h_pose 내부) */
-		motor_return_to_9h_pose(op);
+		g_idle_add(winder_return_to_9h_safe_idle, op);
 		return;
 	}
 
