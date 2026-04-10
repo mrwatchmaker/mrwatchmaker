@@ -49,6 +49,7 @@ void motor_get_visual_goal_deltas(int *delta_face, int *delta_arm) {
 
 static HANDLE hSerial = INVALID_HANDLE_VALUE;
 static char port_buf[16] = "COM5";  /* 기본값 */
+static char g_opened_win_path[32] = "";
 static COMMTIMEOUTS g_io_timeouts;
 static int g_io_timeouts_valid = 0;
 
@@ -153,10 +154,16 @@ int motor_init(const char *port_name) {
     char win_path[32];
     int ret = 0;
     motor_io_lock();
-    if (hSerial != INVALID_HANDLE_VALUE) {
-        CloseHandle(hSerial);
-    }
     com_port_to_createfile_path(port_name, win_path, sizeof(win_path));
+    if (hSerial != INVALID_HANDLE_VALUE) {
+        if (strcmp(g_opened_win_path, win_path) == 0) {
+            motor_io_unlock();
+            return 1;
+        }
+        CloseHandle(hSerial);
+        hSerial = INVALID_HANDLE_VALUE;
+        g_opened_win_path[0] = '\0';
+    }
 
     hSerial = CreateFileA(win_path,
                           GENERIC_READ | GENERIC_WRITE,
@@ -170,6 +177,7 @@ int motor_init(const char *port_name) {
         DWORD err = GetLastError();
         printf("Error opening serial port %s (CreateFile path=%s, err=%lu)\n",
                port_name, win_path, (unsigned long)err);
+        g_opened_win_path[0] = '\0';
         motor_io_unlock();
         return 0;
     }
@@ -181,6 +189,7 @@ int motor_init(const char *port_name) {
         printf("Error getting state\n");
         CloseHandle(hSerial);
         hSerial = INVALID_HANDLE_VALUE;
+        g_opened_win_path[0] = '\0';
         motor_io_unlock();
         return 0;
     }
@@ -194,6 +203,7 @@ int motor_init(const char *port_name) {
         printf("Error setting state\n");
         CloseHandle(hSerial);
         hSerial = INVALID_HANDLE_VALUE;
+        g_opened_win_path[0] = '\0';
         motor_io_unlock();
         return 0;
     }
@@ -210,6 +220,8 @@ int motor_init(const char *port_name) {
 	    g_io_timeouts_valid = 1;
     else
 	    g_io_timeouts_valid = 0;
+    strncpy(g_opened_win_path, win_path, sizeof(g_opened_win_path) - 1);
+    g_opened_win_path[sizeof(g_opened_win_path) - 1] = '\0';
     printf("Successfully opened %s at 1000000 baud\n", win_path);
     ret = 1;
     motor_io_unlock();
@@ -501,6 +513,7 @@ void motor_close() {
         CloseHandle(hSerial);
         hSerial = INVALID_HANDLE_VALUE;
     }
+    g_opened_win_path[0] = '\0';
     g_io_timeouts_valid = 0;
     motor_io_unlock();
 }

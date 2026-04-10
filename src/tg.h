@@ -226,11 +226,13 @@ struct output_panel {
 	GtkWidget *winder_button;
 	GtkWidget *winder_status_label;
 	GtkWidget *winder_preset_combo;
+	GtkWidget *winder_speed_buttons[4];
 	int winder_active;    // 0=정지, 1=동작중
 	int winder_state;     // 현재 시퀀스 인덱스
 	int winder_countdown; // (legacy) ms 카운트다운
 	int winder_cycles;    // 완료된 순환 횟수
 	int winder_preset;    // 선택된 프리셋 인덱스
+	int winder_speed_level; // 1~4
 	int winder_tick_ms;   // winder tick 간격(ms)
 	guint winder_timeout_id; /* g_timeout_add_seconds(winder_tick) — 종료 시 제거 */
 

@@ -29,8 +29,10 @@
 
 /* 자세차: 고정 6(5·6번 이름=custom_labels ch/cb) → 슬롯 0..5 */
 #define POS_FIXED_COUNT 6
-/* 자세차 자동측정: Present(논리틱)와 🕘9시(기본) 목표틱 차이 허용 한도 — 초과 시 기준점 안내 */
+/* 자세차 자동측정: Present(논리틱)와 기준점(ch) 목표틱 차이 허용 한도 */
 #define POS_AUTO_MEASURE_BASELINE_MAX_DELTA_TICKS 100
+/* 슬롯 인덱스: 0=9시,1=12시,2=3시,3=6시,4=ch,5=cb */
+#define BASE_SLOT_INDEX 4
 
 // ── Watch Winder 프리셋 (init_output_panel에서 사용하므로 파일 최상단) ──
 /* 고정 5·6번(윗면/아랫면 자리) 표시명 — mrwatchmaker_coords.txt custom_labels (기본 ch / cb) */
@@ -47,7 +49,7 @@ static const int wp5[] = {0,3,0,3};
 static const int wp6[] = {3,0,1,0};
 static const int wp7[] = {0,1,2,3,2,1};
 
-static const int wp_pos[] = {0,1,2,3,4,5}; /* 고정 6자세 순서 */
+static const int wp_pos[] = {4,5,0,1,2,3}; /* 고정 6자세 순서(ch/cb 우선) */
 
 static const WinderPreset winder_presets[] = {
 	{"풀 코스 (6→9→12→3→6→3→12→9)",     wp0, 8},
@@ -93,12 +95,18 @@ static int micro_adj_base_face = 0;
 static int micro_adj_base_arm = 0;
 static int micro_adj_base_valid = 0;
 
-#define MICRO_STEP_FACE 50
+#define MICRO_STEP_FACE 80
 /* ARM은 Face 대비 틱당 체감/데드밴드가 커서 너무 작으면 "가끔 안 되는" 현상이 생김 */
-#define MICRO_STEP_ARM  20
+#define MICRO_STEP_ARM  30
 /* 초안전 모드: 미세조정도 느리게 움직여 기어 충격을 줄임 */
-#define MICRO_NUDGE_MOVE_MS 700
-#define MICRO_HOLD_GAP_US   75000U
+#define MICRO_NUDGE_MOVE_MS 450
+#define MICRO_HOLD_GAP_US   35000U
+/* 기준점 미세조정은 저항 구간을 넘기기 위해 토크를 약간 상향 */
+#define MICRO_ADJ_TORQUE_LIMIT 220
+/* 자동/수동 자세 이동은 목표 도달 우선 */
+#define POSITION_MOVE_TORQUE_LIMIT 260
+/* 와인더는 연속 구동 중 누적 부하가 있어 토크를 더 확보 */
+#define WINDER_MOVE_TORQUE_LIMIT 320
 
 enum {
 	MICRO_REP_NONE = 0,
@@ -133,36 +141,38 @@ static int tick_delta_signed(int base, int cur) {
 	return cw;
 }
 
-/* 9시 기준 고정 규칙:
- * - 9/12/3/6: Arm 고정, Face는 +1023씩 회전
- * - ch: 6시에서 Arm만 +2046
- * - cb: ch Arm 고정, Face만 +2046 */
+/* ch 기준 고정 규칙(기존 슬롯 배치 보존):
+ * - 12시(slot1) = ch Face - 2046, cb(slot5)=12시와 동일 Face
+ * - 9시(slot0)  = 12시 - 3069
+ * - 3시(slot2)  = 9시 + 2046
+ * - 6시(slot3)  = 9시 + 1023
+ * - Arm: ch/cb 동일, 9/12/3/6 = ch Arm + 1023 */
 static void rebuild_fixed_positions_from_base(void) {
-	int face9 = clamp_face_hard(norm4096_pc(face_positions[0]));
-	int arm9 = clamp_arm_hard(norm4096_pc(arm_positions[0]));
-	int face6 = norm4096_pc(face9 + (3 * 1023));
-	int face12 = norm4096_pc(face9 + 1023);
-	int arm6 = arm9;
-	int arm_ch = norm4096_pc(arm6 - 1023);
+	int face_ch = clamp_face_hard(norm4096_pc(face_positions[BASE_SLOT_INDEX]));
+	int arm_ch = clamp_arm_hard(norm4096_pc(arm_positions[BASE_SLOT_INDEX]));
+	int face12 = norm4096_pc(face_ch - 2046);
+	int face9 = norm4096_pc(face12 - 3069);
+	int face6 = norm4096_pc(face9 + 1023);
+	int arm9 = norm4096_pc(arm_ch + 1023);
 
 	face_positions[0] = clamp_face_hard(face9);
 	arm_positions[0] = clamp_arm_hard(arm9);
 
 	/* 12시/6시 페이스 번호가 바뀌지 않도록 순서를 고정 */
-	face_positions[1] = clamp_face_hard(face6);
+	face_positions[1] = clamp_face_hard(face12);
 	arm_positions[1] = clamp_arm_hard(arm9);
 
 	face_positions[2] = clamp_face_hard(norm4096_pc(face9 + 2046));
 	arm_positions[2] = clamp_arm_hard(arm9);
 
-	face_positions[3] = clamp_face_hard(face12);
-	arm_positions[3] = clamp_arm_hard(arm6);
+	face_positions[3] = clamp_face_hard(face6);
+	arm_positions[3] = clamp_arm_hard(arm9);
 
 	/* UI 인덱스 기준으로 ch/cb가 뒤바뀌지 않게 순서를 고정 */
-	face_positions[4] = clamp_face_hard(norm4096_pc(face6 + 2046)); /* ch */
+	face_positions[4] = clamp_face_hard(face_ch); /* ch */
 	arm_positions[4] = clamp_arm_hard(arm_ch);
 
-	face_positions[5] = clamp_face_hard(face6); /* cb */
+	face_positions[5] = clamp_face_hard(face12); /* cb */
 	arm_positions[5] = clamp_arm_hard(arm_ch);
 }
 
@@ -222,16 +232,33 @@ typedef struct {
 static gboolean on_micro_button_press(GtkWidget *w, GdkEventButton *ev, gpointer data);
 static gboolean on_micro_button_release(GtkWidget *w, GdkEventButton *ev, gpointer data);
 void on_batch_apply_clicked(GtkWidget *w, gpointer d);
+static void update_winder_speed_buttons(struct output_panel *op);
+static void on_winder_speed_clicked(GtkWidget *widget, gpointer data);
 static GtkWidget *s_ref9_window;
 /* 암 풀기 후 손으로 돌릴 때 기준점 미세조정 실시간 반영 (워커 스레드에서 Present 읽기 → 메인 idle로 라벨 갱신) */
 static GThread *s_arm_release_poll_thread;
 static volatile gint s_arm_release_poll_run;
 static struct output_panel *s_arm_release_poll_op;
+/* 앱 시작 직후 Present 동기화 중엔 micro ±가 동시에 motor_init 하지 않도록 짧게 대기 */
+static volatile gint s_servo_boot_sync_in_progress = 0;
 static void arm_release_live_poll_stop(void);
 static void arm_release_live_poll_start(struct output_panel *op);
 static gchar *reference_9oclock_image_path(void);
 static void show_reference_9oclock_window(struct output_panel *op);
-static gboolean idle_show_ref9_on_micro_press(gpointer data);
+static const int g_pos_ui_order[POS_FIXED_COUNT] = {4, 5, 0, 1, 2, 3};
+
+static const char *slot_name_short(int slot_idx)
+{
+	switch (slot_idx) {
+	case 0: return _("🕘 9시");
+	case 1: return _("🕛 12시");
+	case 2: return _("🕒 3시");
+	case 3: return _("🕕 6시");
+	case 4: return _("⬆ ch");
+	case 5: return _("⬇ cb");
+	default: return _("자세");
+	}
+}
 
 /* 끝단 근처(하드스톱/기구 간섭/토크 부족)에서 버징/떨림이 생기기 쉬워
  * "와인더 동작"에 한해서만 여유를 두고 안쪽으로 클램프한다.
@@ -1118,6 +1145,8 @@ struct output_panel *init_output_panel(struct computer *comp, struct snapshot *s
 	op->winder_state = 0;
 	op->winder_countdown = 0;
 	op->winder_cycles = 0;
+	op->winder_speed_level = 2;
+	for (int i = 0; i < 4; i++) op->winder_speed_buttons[i] = NULL;
 	op->winder_timeout_id = 0;
 
 	op->computer = comp;
@@ -1273,18 +1302,26 @@ struct output_panel *init_output_panel(struct computer *comp, struct snapshot *s
 	gtk_grid_set_column_spacing(GTK_GRID(pos_grid), 12);
 	gtk_box_pack_start(GTK_BOX(pos_vbox), pos_grid, FALSE, FALSE, 0);
 
-	// 고정 6자세 행 (5·6번 라벨은 custom_labels 의 ch / cb)
-	const char *pos_names_fixed4[] = {
-		_("🕘 9시 (기본)"), _("🕛 12시"), _("🕒 3시"), _("🕕 6시"),
-	};
-	for (int i = 0; i < POS_FIXED_COUNT; i++) {
+	// 고정 6자세 행: ch/cb를 상단에 배치
+	for (int row = 0; row < POS_FIXED_COUNT; row++) {
+		int i = g_pos_ui_order[row];
 		GtkWidget *lbl_name;
-		if (i < 4) {
-			lbl_name = gtk_label_new(pos_names_fixed4[i]);
-		} else {
-			char *t = g_strdup_printf(i == 4 ? _("⬆ %s") : _("⬇ %s"), g_custom_label[i - 4]);
+		if (i == 4) {
+			char *t = g_strdup_printf(_("⬆ %s (기준)"), g_custom_label[0]);
 			lbl_name = gtk_label_new(t);
 			g_free(t);
+		} else if (i == 5) {
+			char *t = g_strdup_printf(_("⬇ %s"), g_custom_label[1]);
+			lbl_name = gtk_label_new(t);
+			g_free(t);
+		} else if (i == 0) {
+			lbl_name = gtk_label_new(_("🕘 9시"));
+		} else if (i == 1) {
+			lbl_name = gtk_label_new(_("🕛 12시"));
+		} else if (i == 2) {
+			lbl_name = gtk_label_new(_("🕒 3시"));
+		} else {
+			lbl_name = gtk_label_new(_("🕕 6시"));
 		}
 		gtk_style_context_add_class(gtk_widget_get_style_context(lbl_name), "pos-name");
 		gtk_widget_set_halign(lbl_name, GTK_ALIGN_START);
@@ -1304,16 +1341,16 @@ struct output_panel *init_output_panel(struct computer *comp, struct snapshot *s
 		// 고정 자세 측정 버튼 (커스텀과 동일하게 행 오른쪽에 배치)
 		GtkWidget *measure_btn = gtk_button_new_with_label(_("측정"));
 		gtk_style_context_add_class(gtk_widget_get_style_context(measure_btn), "btn-test");
-		g_object_set_data(G_OBJECT(measure_btn), "manual_target", GINT_TO_POINTER(i)); // 0..5 고정
+		g_object_set_data(G_OBJECT(measure_btn), "manual_target", GINT_TO_POINTER(i)); // 실제 슬롯 인덱스
 		extern void on_manual_measure_clicked(GtkWidget *widget, gpointer data);
 		g_signal_connect(measure_btn, "clicked", G_CALLBACK(on_manual_measure_clicked), op);
 		op->manual_measure_buttons[i] = measure_btn;
 
 		/* [이름] [측정값] [자세차 목표틱] [측정] */
-		gtk_grid_attach(GTK_GRID(pos_grid), lbl_name,               0, i, 1, 1);
-		gtk_grid_attach(GTK_GRID(pos_grid), op->pos_labels[i],      1, i, 1, 1);
-		gtk_grid_attach(GTK_GRID(pos_grid), op->pos_coord_labels[i], 2, i, 1, 1);
-		gtk_grid_attach(GTK_GRID(pos_grid), measure_btn,            3, i, 1, 1);
+		gtk_grid_attach(GTK_GRID(pos_grid), lbl_name,               0, row, 1, 1);
+		gtk_grid_attach(GTK_GRID(pos_grid), op->pos_labels[i],      1, row, 1, 1);
+		gtk_grid_attach(GTK_GRID(pos_grid), op->pos_coord_labels[i], 2, row, 1, 1);
+		gtk_grid_attach(GTK_GRID(pos_grid), measure_btn,            3, row, 1, 1);
 	}
 
 	// 버튼 행
@@ -1378,7 +1415,7 @@ struct output_panel *init_output_panel(struct computer *comp, struct snapshot *s
 	GtkWidget *btn_batch = gtk_button_new_with_label(_("기준점 일괄적용"));
 	gtk_style_context_add_class(gtk_widget_get_style_context(btn_batch), "btn-test");
 	gtk_widget_set_tooltip_text(btn_batch,
-		_("Face/Arm ±로 맞춘 만큼 6자세 목표 틱에 한 번에 반영합니다. 🕘 9시(기본) 자세에 맞춘 뒤 [기준점 일괄적용] 하세요."));
+		_("Face/Arm ±로 맞춘 만큼 6자세 목표 틱에 한 번에 반영합니다. ⬆ ch 자세에 맞춘 뒤 [기준점 일괄적용] 하세요."));
 	gtk_box_pack_start(GTK_BOX(micro_row), btn_batch, FALSE, FALSE, 0);
 	g_signal_connect(btn_batch, "clicked", G_CALLBACK(on_batch_apply_clicked), op);
 
@@ -1424,8 +1461,24 @@ struct output_panel *init_output_panel(struct computer *comp, struct snapshot *s
 		gtk_combo_box_set_active(GTK_COMBO_BOX(op->winder_preset_combo), 0);
 		gtk_box_pack_start(GTK_BOX(preset_hbox), op->winder_preset_combo, TRUE, TRUE, 0);
 
+		// ── 속도 선택(1~4단) ──
+		GtkWidget *speed_hbox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
+		gtk_box_pack_start(GTK_BOX(winder_vbox), speed_hbox, FALSE, FALSE, 0);
+		GtkWidget *speed_lbl = gtk_label_new(_("속도:"));
+		gtk_style_context_add_class(gtk_widget_get_style_context(speed_lbl), "spin-label");
+		gtk_box_pack_start(GTK_BOX(speed_hbox), speed_lbl, FALSE, FALSE, 0);
+		for (int i = 0; i < 4; i++) {
+			GtkWidget *sb = gtk_button_new_with_label("");
+			gtk_style_context_add_class(gtk_widget_get_style_context(sb), "btn-test");
+			g_object_set_data(G_OBJECT(sb), "winder_speed_level", GINT_TO_POINTER(i + 1));
+			g_signal_connect(sb, "clicked", G_CALLBACK(on_winder_speed_clicked), op);
+			op->winder_speed_buttons[i] = sb;
+			gtk_box_pack_start(GTK_BOX(speed_hbox), sb, FALSE, FALSE, 0);
+		}
+		update_winder_speed_buttons(op);
+
 		// ── 상태 레이블 ──
-		op->winder_status_label = gtk_label_new(_("대기 중 — 프리셋을 선택하고 시작하세요"));
+		op->winder_status_label = gtk_label_new(_("대기 중 — 프리셋/속도를 선택하고 시작하세요"));
 		gtk_style_context_add_class(gtk_widget_get_style_context(op->winder_status_label), "pos-value");
 		gtk_widget_set_halign(op->winder_status_label, GTK_ALIGN_START);
 		gtk_label_set_line_wrap(GTK_LABEL(op->winder_status_label), TRUE);
@@ -1493,6 +1546,7 @@ struct output_panel *init_output_panel(struct computer *comp, struct snapshot *s
 	gtk_widget_set_events(op->debug_drawing_area, GDK_EXPOSURE_MASK);
 #endif
 
+	g_atomic_int_set(&s_servo_boot_sync_in_progress, 1);
 	g_thread_new("sync_servo_pose", sync_last_pos_from_servos_thread, op);
 
 	return op;
@@ -1529,13 +1583,55 @@ static int lerp_int(int a, int b, int num, int den) {
 	return a + (int)((long long)(b - a) * num / den);
 }
 
-/* 와인더 전용: 구간 시간 계산 */
-static int winder_calc_duration(int from, int to) {
+static int winder_speed_percent(int level)
+{
+	switch (level) {
+	case 1: return 135; /* 가장 느림 */
+	case 2: return 100; /* 기본 */
+	case 3: return 75;  /* 빠름 */
+	case 4: return 58;  /* 가장 빠름 */
+	default: return 100;
+	}
+}
+
+/* 와인더 전용: 구간 시간 계산(속도 1~4단 반영) */
+static int winder_calc_duration(struct output_panel *op, int from, int to) {
 	int dist = from - to;
 	if (dist < 0) dist = -dist;
 	int ms = WINDER_MIN_MS + (dist * 2);
 	if (ms > WINDER_MAX_MS) ms = WINDER_MAX_MS;
-	return ms;
+	int level = (op && op->winder_speed_level >= 1 && op->winder_speed_level <= 4) ? op->winder_speed_level : 2;
+	int scaled = (ms * winder_speed_percent(level)) / 100;
+	if (scaled < 700) scaled = 700;
+	return scaled;
+}
+
+static void update_winder_speed_buttons(struct output_panel *op)
+{
+	if (!op) return;
+	for (int i = 0; i < 4; i++) {
+		GtkWidget *b = op->winder_speed_buttons[i];
+		if (!b) continue;
+		char txt[32];
+		int level = i + 1;
+		snprintf(txt, sizeof(txt), "%s%d단", (op->winder_speed_level == level) ? "● " : "", level);
+		gtk_button_set_label(GTK_BUTTON(b), txt);
+	}
+}
+
+static void on_winder_speed_clicked(GtkWidget *widget, gpointer data)
+{
+	struct output_panel *op = (struct output_panel *)data;
+	if (!op || !widget) return;
+	int level = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(widget), "winder_speed_level"));
+	if (level < 1 || level > 4) return;
+	op->winder_speed_level = level;
+	update_winder_speed_buttons(op);
+	if (!op->winder_active && op->winder_status_label) {
+		char msg[96];
+		snprintf(msg, sizeof(msg), "대기 중 — 프리셋/속도를 선택하고 시작하세요 (현재 %d단)", level);
+		gtk_label_set_text(GTK_LABEL(op->winder_status_label), msg);
+	}
 }
 
 static int clamp_face(int v) {
@@ -1648,8 +1744,8 @@ static void load_coords_from_file(void)
 	rebuild_fixed_positions_from_base();
 	g_spin_face = clamp_face_hard(g_spin_face);
 	g_spin_arm = clamp_arm_hard(g_spin_arm);
-	last_pos1 = face_positions[0];
-	last_pos2 = arm_positions[0];
+	last_pos1 = face_positions[BASE_SLOT_INDEX];
+	last_pos2 = arm_positions[BASE_SLOT_INDEX];
 }
 
 static void save_coords_to_file(void)
@@ -1741,18 +1837,14 @@ static void auto_measure_set_button_countdown_label(struct output_panel *op)
 		return;
 	pose_idx = op->auto_measure_state - 1;
 	if (pose_idx >= 0 && pose_idx < POS_FIXED_COUNT) {
-		if (pose_idx == 0)
-			pname = _("🕘 9시 (기본)");
-		else if (pose_idx == 1)
-			pname = _("🕛 12시");
-		else if (pose_idx == 2)
-			pname = _("🕒 3시");
-		else if (pose_idx == 3)
-			pname = _("🕕 6시");
-		else {
-			snprintf(posebuf, sizeof(posebuf), _("★%s"), g_custom_label[pose_idx - 4]);
-			pname = posebuf;
-		}
+		int slot = g_pos_ui_order[pose_idx];
+		if (slot == 4)
+			snprintf(posebuf, sizeof(posebuf), _("★%s"), g_custom_label[0]);
+		else if (slot == 5)
+			snprintf(posebuf, sizeof(posebuf), _("★%s"), g_custom_label[1]);
+		else
+			snprintf(posebuf, sizeof(posebuf), "%s", slot_name_short(slot));
+		pname = posebuf;
 		snprintf(buf, sizeof(buf), _("자세: %s — 측정 중... %d 초"), pname,
 			op->auto_measure_countdown);
 	} else {
@@ -1781,10 +1873,26 @@ static void motor_ensure_torque_on(void) {
 	motor_write_word(2, 48, TORQUE_LIMIT_ULTRA_SAFE);
 }
 
+static void motor_ensure_torque_on_for_position_move(void) {
+	motor_write_byte(1, 0x28, 1);
+	motor_write_byte(2, 0x28, 1);
+	motor_write_word(1, 48, POSITION_MOVE_TORQUE_LIMIT);
+	motor_write_word(2, 48, POSITION_MOVE_TORQUE_LIMIT);
+}
+
+static void motor_ensure_torque_on_for_winder_move(void) {
+	motor_write_byte(1, 0x28, 1);
+	motor_write_byte(2, 0x28, 1);
+	motor_write_word(1, 48, WINDER_MOVE_TORQUE_LIMIT);
+	motor_write_word(2, 48, WINDER_MOVE_TORQUE_LIMIT);
+}
+
 #define STALL_CHECK_SETTLE_MS 150
 #define STALL_CHECK_MIN_COMMAND_DISTANCE_TICKS 50
 #define STALL_CHECK_MIN_PROGRESS_TICKS 8
 #define STALL_PROTECTION_COOLDOWN_MS 4500
+/* 사용자 요청: PC에서 자동 기구막힘 감지/자동 토크해제 비활성화 */
+#define ENABLE_STALL_PROTECTION 0
 static gint64 g_stall_protection_cooldown_until_ms = 0;
 
 static gint64 now_ms_mono(void)
@@ -1840,6 +1948,8 @@ static gboolean stall_protect_notice_idle(gpointer data)
 
 static void stall_protect_trigger(struct output_panel *op, const char *reason)
 {
+	if (!ENABLE_STALL_PROTECTION)
+		return;
 	gint64 now = now_ms_mono();
 	g_stall_protection_cooldown_until_ms = now + STALL_PROTECTION_COOLDOWN_MS;
 	/* 즉시 완전 해제: Limit 0 + Torque OFF (양축) */
@@ -1954,18 +2064,18 @@ static void arm_release_live_poll_start(struct output_panel *op)
 static void motor_return_to_9h_pose_inner(struct output_panel *op_for_label_idle)
 {
 	int dur1, dur2;
-	int p1 = clamp_face(face_positions[0]);
-	int p2 = clamp_arm(arm_positions[0]);
+	int p1 = clamp_face(face_positions[BASE_SLOT_INDEX]);
+	int p2 = clamp_arm(arm_positions[BASE_SLOT_INDEX]);
 
 	arm_release_live_poll_stop();
 	if (!motor_init(motor_get_port()))
 		return;
-	if (now_ms_mono() < g_stall_protection_cooldown_until_ms) {
+	if (ENABLE_STALL_PROTECTION && now_ms_mono() < g_stall_protection_cooldown_until_ms) {
 		motor_disable_torque_all();
 		motor_close();
 		return;
 	}
-	motor_ensure_torque_on();
+	motor_ensure_torque_on_for_position_move();
 	dur1 = calc_duration(last_pos1, p1);
 	dur2 = calc_duration(last_pos2, p2);
 	int before1 = motor_read_present_position(1);
@@ -1989,7 +2099,7 @@ static void motor_return_to_9h_pose_inner(struct output_panel *op_for_label_idle
 		int after2 = motor_read_present_position(2);
 		int s1 = axis_stalled(before1, after1, p1);
 		int s2 = axis_stalled(before2, after2, p2);
-		if (s1 || s2) {
+		if (ENABLE_STALL_PROTECTION && (s1 || s2)) {
 			stall_protect_trigger(op_for_label_idle, "return_to_9h");
 			motor_close();
 			return;
@@ -2050,30 +2160,14 @@ void op_shutdown_motor_home_9h(struct output_panel *op)
 static gpointer sync_last_pos_from_servos_thread(gpointer data) {
 	struct output_panel *op = (struct output_panel *)data;
 
-	/* idle 로 poll_stop 하면 메인이 바쁠 때 훨씬 늦게 실행되어 암 풀기 후 실시간 폴링만 끊는 경우가 있음 */
-	if (!motor_init(motor_get_port())) {
-		micro_adj_base_valid = 0;
-		if (op) g_idle_add(refresh_micro_motor_label_idle, op);
-		return NULL;
+	/* 시작 지연의 주원인인 무거운 Present 재시도는 제거.
+	 * 최초 기준점은 사용자가 +/- 입력 시점에 빠르게 동기화한다. */
+	micro_adj_base_valid = 0;
+	if (motor_init(motor_get_port())) {
+		motor_close();
 	}
-	motor_ensure_torque_on();
-	g_usleep(300000);
-	{
-		int r1 = -1, r2 = -1;
-		for (int attempt = 0; attempt < 3 && (r1 < 0 || r2 < 0); attempt++) {
-			if (r1 < 0) r1 = motor_read_present_position(1);
-			if (r2 < 0) r2 = motor_read_present_position(2);
-			if (r1 < 0 || r2 < 0)
-				g_usleep(120000);
-		}
-		/* 한쪽만 읽혀도 숫자 표시는 유지되도록 마지막 위치를 보존한다. */
-		if (r1 < 0) r1 = last_pos1;
-		if (r2 < 0) r2 = last_pos2;
-
-		micro_adj_refresh_from_present_reads(r1, r2, op);
-	}
-	motor_disable_torque_all();
-	motor_close();
+	if (op) g_idle_add(refresh_micro_motor_label_idle, op);
+	g_atomic_int_set(&s_servo_boot_sync_in_progress, 0);
 	return NULL;
 }
 
@@ -2090,18 +2184,18 @@ static void set_manual_buttons_enabled(struct output_panel *op, int enabled) {
 }
 
 static void manual_reset_button_labels(struct output_panel *op) {
-	static const char *fixed_names[4] = {
-		"🕘 9시 측정", "🕛 12시 측정", "🕒 3시 측정", "🕕 6시 측정",
-	};
-	for (int i = 0; i < 4; i++)
-		if (op->manual_measure_buttons[i])
-			gtk_button_set_label(GTK_BUTTON(op->manual_measure_buttons[i]), _(fixed_names[i]));
-	for (int i = 4; i < POS_FIXED_COUNT; i++)
-		if (op->manual_measure_buttons[i]) {
+	for (int i = 0; i < POS_FIXED_COUNT; i++) {
+		if (!op->manual_measure_buttons[i]) continue;
+		if (i == 4 || i == 5) {
 			char buf[64];
 			snprintf(buf, sizeof(buf), _("★%s 측정"), g_custom_label[i - 4]);
 			gtk_button_set_label(GTK_BUTTON(op->manual_measure_buttons[i]), buf);
+		} else {
+			char buf[64];
+			snprintf(buf, sizeof(buf), _("%s 측정"), slot_name_short(i));
+			gtk_button_set_label(GTK_BUTTON(op->manual_measure_buttons[i]), buf);
 		}
+	}
 }
 
 static gboolean manual_measure_tick(gpointer data) {
@@ -2167,7 +2261,7 @@ static gpointer manual_move_thread_func(gpointer data) {
 	int dur2 = calc_duration(last_pos2, p2);
 
 	motor_init(motor_get_port());
-	if (now_ms_mono() < g_stall_protection_cooldown_until_ms) {
+	if (ENABLE_STALL_PROTECTION && now_ms_mono() < g_stall_protection_cooldown_until_ms) {
 		motor_disable_torque_all();
 		motor_close();
 		/* 이동 후 메인 스레드에서 카운트다운 시작은 하지 않음 */
@@ -2175,6 +2269,7 @@ static gpointer manual_move_thread_func(gpointer data) {
 		return NULL;
 	}
 	motor_ensure_torque_on();
+	motor_ensure_torque_on_for_position_move();
 	int before1 = motor_read_present_position(1);
 	int before2 = motor_read_present_position(2);
 	if (before1 < 0) before1 = last_pos1;
@@ -2189,7 +2284,7 @@ static gpointer manual_move_thread_func(gpointer data) {
 		int after2 = motor_read_present_position(2);
 		int s1 = axis_stalled(before1, after1, p1);
 		int s2 = axis_stalled(before2, after2, p2);
-		if (s1 || s2) {
+		if (ENABLE_STALL_PROTECTION && (s1 || s2)) {
 			stall_protect_trigger(md->op, "manual_move");
 			motor_close();
 			g_free(md);
@@ -2363,8 +2458,28 @@ static gpointer micro_rep_worker(gpointer unused)
 		goto worker_cleanup;
 	}
 
-	if (!motor_init(motor_get_port())) {
-		schedule_servo_connect_error_dialog_once(op);
+	/* 시작 직후 동기화와 충돌 방지: 오래 기다리지 않고 빠르게 반환 */
+	if (g_atomic_int_get(&s_servo_boot_sync_in_progress)) {
+		if (op->micro_motor_readout_label && GTK_IS_LABEL(op->micro_motor_readout_label)) {
+			gtk_label_set_text(GTK_LABEL(op->micro_motor_readout_label),
+				_("서보 초기화 중입니다. 잠시 후 다시 눌러주세요."));
+		}
+		micro_rep_stop();
+		goto worker_cleanup;
+	}
+	int opened = 0;
+	for (int attempt = 0; attempt < 2; attempt++) {
+		if (motor_init(motor_get_port())) {
+			opened = 1;
+			break;
+		}
+		g_usleep(30000);
+	}
+	if (!opened) {
+		if (op->micro_motor_readout_label && GTK_IS_LABEL(op->micro_motor_readout_label)) {
+			gtk_label_set_text(GTK_LABEL(op->micro_motor_readout_label),
+				_("서보 연결 지연 중입니다. 잠시 후 다시 시도하세요."));
+		}
 		micro_rep_stop();
 		goto worker_cleanup;
 	}
@@ -2417,13 +2532,15 @@ static gpointer micro_rep_worker(gpointer unused)
 		int la = logical_arm_from_raw(rA, vdA);
 
 		if (k == MICRO_REP_FACE_M || k == MICRO_REP_FACE_P) {
-			if (now_ms_mono() < g_stall_protection_cooldown_until_ms) {
+			if (ENABLE_STALL_PROTECTION && now_ms_mono() < g_stall_protection_cooldown_until_ms) {
 				motor_disable_torque_all();
 				g_usleep(120000);
 				continue;
 			}
 			int step = (k == MICRO_REP_FACE_M) ? -MICRO_STEP_FACE : MICRO_STEP_FACE;
 			int next_lf = clamp_face_hard(norm4096_pc(lf + step));
+			motor_write_byte(1, 0x28, 1);
+			motor_write_word(1, 48, MICRO_ADJ_TORQUE_LIMIT);
 			int beforeF = motor_read_present_position(1);
 			if (beforeF < 0) beforeF = last_pos1;
 			motor_move(1, next_lf, MICRO_NUDGE_MOVE_MS, 0);
@@ -2432,7 +2549,7 @@ static gpointer micro_rep_worker(gpointer unused)
 			g_usleep(STALL_CHECK_SETTLE_MS * 1000);
 			{
 				int afterF = motor_read_present_position(1);
-				if (axis_stalled(beforeF, afterF, next_lf)) {
+				if (ENABLE_STALL_PROTECTION && axis_stalled(beforeF, afterF, next_lf)) {
 					stall_protect_trigger(op, "micro_face");
 					continue;
 				}
@@ -2453,7 +2570,7 @@ static gpointer micro_rep_worker(gpointer unused)
 				}
 			}
 		} else if (k == MICRO_REP_ARM_M || k == MICRO_REP_ARM_P) {
-			if (now_ms_mono() < g_stall_protection_cooldown_until_ms) {
+			if (ENABLE_STALL_PROTECTION && now_ms_mono() < g_stall_protection_cooldown_until_ms) {
 				motor_disable_torque_all();
 				g_usleep(120000);
 				continue;
@@ -2463,8 +2580,8 @@ static gpointer micro_rep_worker(gpointer unused)
 			/* ARM 홀드 미세조정 중에는 토크가 간헐적으로 풀려 입력이 끊길 수 있어
 			 * 매 반복마다 암 토크/리밋을 다시 복구한다. */
 			motor_write_byte(2, 0x28, 1);
-			/* ARM 미세조정 반복 시에도 초안전 토크(10%) 유지 */
-			motor_write_word(2, 48, 100);
+			/* ARM 미세조정 반복 시 토크를 올려 저항 구간에서 멈춤 완화 */
+			motor_write_word(2, 48, MICRO_ADJ_TORQUE_LIMIT);
 			int beforeA = motor_read_present_position(2);
 			if (beforeA < 0) beforeA = last_pos2;
 			motor_move(2, next_la, MICRO_NUDGE_MOVE_MS, 0);
@@ -2474,7 +2591,7 @@ static gpointer micro_rep_worker(gpointer unused)
 			g_usleep(STALL_CHECK_SETTLE_MS * 1000);
 			{
 				int afterA = motor_read_present_position(2);
-				if (axis_stalled(beforeA, afterA, next_la)) {
+				if (ENABLE_STALL_PROTECTION && axis_stalled(beforeA, afterA, next_la)) {
 					stall_protect_trigger(op, "micro_arm");
 					continue;
 				}
@@ -2572,19 +2689,19 @@ static gpointer batch_apply_thread(gpointer data) {
 	 * (last_pos는 raw/논리틱이 섞일 수 있어 9시 저장값이 틀어질 수 있음) */
 	int curF = micro_adj_base_face;
 	int curA = micro_adj_base_arm;
-	int dF = tick_delta_signed(face_positions[0], curF);
-	int dA = tick_delta_signed(arm_positions[0], curA);
+	int dF = tick_delta_signed(face_positions[BASE_SLOT_INDEX], curF);
+	int dA = tick_delta_signed(arm_positions[BASE_SLOT_INDEX], curA);
 	if (dF == 0 && dA == 0) {
 		g_idle_add(batch_apply_noop_idle, op);
 		return NULL;
 	}
-	/* 기준점 적용은 누적 보정이 아니라 "현재 미세조정 값 = 9시 기본값"으로 고정 */
-	face_positions[0] = clamp_face_hard(norm4096_pc(curF));
-	arm_positions[0] = clamp_arm_hard(norm4096_pc(curA));
+	/* 기준점 적용: 현재 미세조정 값을 ch 기준점으로 고정 */
+	face_positions[BASE_SLOT_INDEX] = clamp_face_hard(norm4096_pc(curF));
+	arm_positions[BASE_SLOT_INDEX] = clamp_arm_hard(norm4096_pc(curA));
 	rebuild_fixed_positions_from_base();
 	save_coords_to_file();
-	last_pos1 = face_positions[0];
-	last_pos2 = arm_positions[0];
+	last_pos1 = face_positions[BASE_SLOT_INDEX];
+	last_pos2 = arm_positions[BASE_SLOT_INDEX];
 	micro_adj_base_face = curF;
 	micro_adj_base_arm = curA;
 	batch_apply_done_t *bd = g_new(batch_apply_done_t, 1);
@@ -2848,20 +2965,13 @@ static void show_reference_9oclock_window(struct output_panel *op)
 		}
 	}
 
-	GtkWidget *hint = gtk_label_new(_("기준점 미세조정은 사진처럼 맞추시면 됩니다."));
+	GtkWidget *hint = gtk_label_new(_("기준점 미세조정은 사진처럼 맞추시면 됩니다.\n시계가 하늘을 바라보게 맞추시면 됩니다.\n다 맞추셨으면 [기준점 일괄적용]을 눌러주세요."));
 	gtk_label_set_line_wrap(GTK_LABEL(hint), TRUE);
 	gtk_widget_set_halign(hint, GTK_ALIGN_CENTER);
 	gtk_box_pack_start(GTK_BOX(vbox), hint, FALSE, FALSE, 0);
 
 	gtk_widget_show_all(dlg);
 	g_idle_add(idle_ref9_position_beside_parent, dlg);
-}
-
-static gboolean idle_show_ref9_on_micro_press(gpointer data)
-{
-	struct output_panel *op = data;
-	show_reference_9oclock_window(op);
-	return FALSE;
 }
 
 static gboolean on_micro_button_press(GtkWidget *w, GdkEventButton *ev, gpointer data)
@@ -2872,8 +2982,16 @@ static gboolean on_micro_button_press(GtkWidget *w, GdkEventButton *ev, gpointer
 	micro_btn_ud_t *ud = data;
 	if (!ud || !ud->op)
 		return FALSE;
+	if (g_atomic_int_get(&s_servo_boot_sync_in_progress)) {
+		if (ud->op->micro_motor_readout_label && GTK_IS_LABEL(ud->op->micro_motor_readout_label)) {
+			gtk_label_set_text(GTK_LABEL(ud->op->micro_motor_readout_label),
+				_("서보 초기화 중입니다. 잠시 후 다시 눌러주세요."));
+		}
+		return TRUE;
+	}
 	arm_release_live_poll_stop();
-	g_idle_add(idle_show_ref9_on_micro_press, ud->op);
+	/* 사용자 요청: 미세조정 시 기준 사진 즉시 표시 */
+	show_reference_9oclock_window(ud->op);
 	micro_rep_start(ud->kind, ud->op);
 	return TRUE;
 }
@@ -2922,7 +3040,7 @@ static gboolean arm_release_done_idle(gpointer data) {
 	if (!GTK_IS_WINDOW(win)) win = NULL;
 	GtkWidget *dlg = gtk_message_dialog_new(GTK_WINDOW(win),
 		GTK_DIALOG_MODAL, GTK_MESSAGE_INFO, GTK_BUTTONS_OK,
-		"%s", _("모터 토크를 해제했습니다. Face/Arm ±로 9시(기본)에 맞춘 뒤 자세차를 다시 시도하세요."));
+		"%s", _("모터 토크를 해제했습니다. Face/Arm ±로 ch 기준점에 맞춘 뒤 자세차를 다시 시도하세요."));
 	gtk_window_set_title(GTK_WINDOW(dlg), _("암풀기"));
 	if (win) gtk_window_set_transient_for(GTK_WINDOW(dlg), GTK_WINDOW(win));
 	gtk_dialog_run(GTK_DIALOG(dlg));
@@ -2980,17 +3098,18 @@ static gboolean auto_measure_tick(gpointer data) {
 	// 카운트다운 0 → 현재 자세 값 기록
 	int idx = op->auto_measure_state - 1;
 	if (idx >= 0 && idx < total) {
+		int slot = g_pos_ui_order[idx];
 		char buf[128];
 		double rate = op->snst->rate;
 		double amp  = op->snst->amp;
 		double be   = op->snst->be;
 		sprintf(buf, _("Rate: %.1f s/d  |  Amp: %.0f°  |  BE: %.1f ms"), rate, amp, be);
-		gtk_label_set_text(GTK_LABEL(op->pos_labels[idx]), buf);
+		gtk_label_set_text(GTK_LABEL(op->pos_labels[slot]), buf);
 		// 원시값 저장 (진단 리포트용)
-		op->pos_rate[idx]     = rate;
-		op->pos_amp[idx]      = amp;
-		op->pos_be[idx]       = be;
-		op->pos_measured[idx] = 1;
+		op->pos_rate[slot]     = rate;
+		op->pos_amp[slot]      = amp;
+		op->pos_be[slot]       = be;
+		op->pos_measured[slot] = 1;
 	}
 
 	// 다음 자세로 전진
@@ -3008,9 +3127,9 @@ static gboolean auto_measure_tick(gpointer data) {
 
 	// 다음 자세 모터 이동
 	motor_init(motor_get_port());
-	motor_ensure_torque_on();
+	motor_ensure_torque_on_for_position_move();
 	{
-		int next = op->auto_measure_state - 1;
+		int next = g_pos_ui_order[op->auto_measure_state - 1];
 		int p1 = clamp_face(face_positions[next]);
 		int p2 = clamp_arm(arm_positions[next]);
 		int t1 = calc_duration(last_pos1, p1);
@@ -3058,6 +3177,7 @@ void on_auto_measure_clicked(GtkWidget *widget, gpointer data) {
 		return;
 	}
 	motor_ensure_torque_on();
+	motor_ensure_torque_on_for_position_move();
 	g_usleep(300000);
 	{
 		int r1 = motor_read_present_position(1);
@@ -3081,8 +3201,8 @@ void on_auto_measure_clicked(GtkWidget *widget, gpointer data) {
 		motor_get_visual_goal_deltas(&vdF, &vdA);
 		int lf = logical_face_from_raw(r1, vdF);
 		int la = logical_arm_from_raw(r2, vdA);
-		int dF = tick_delta_signed(face_positions[0], lf);
-		int dA = tick_delta_signed(arm_positions[0], la);
+		int dF = tick_delta_signed(face_positions[BASE_SLOT_INDEX], lf);
+		int dA = tick_delta_signed(arm_positions[BASE_SLOT_INDEX], la);
 		if (abs(dF) >= POS_AUTO_MEASURE_BASELINE_MAX_DELTA_TICKS
 		    || abs(dA) >= POS_AUTO_MEASURE_BASELINE_MAX_DELTA_TICKS) {
 			motor_disable_torque_all();
@@ -3091,7 +3211,7 @@ void on_auto_measure_clicked(GtkWidget *widget, gpointer data) {
 			if (!GTK_IS_WINDOW(win)) win = NULL;
 			GtkWidget *dlg = gtk_message_dialog_new(GTK_WINDOW(win),
 				GTK_DIALOG_MODAL, GTK_MESSAGE_WARNING, GTK_BUTTONS_OK,
-				"%s", _("기준점이 맞지 않습니다. 기준점 미세조정을 +-을 눌러 기본 자세가 되게 한 후 자세차 자동측정을 실행해 주세요. (이동이나 충격을 받지 않았다면 9시 측정을 누른 후 측정을 시작하면 됩니다.)"));
+				"%s", _("기준점이 맞지 않습니다. 기준점 미세조정으로 ch 자세를 맞춘 뒤 자세차 자동측정을 실행해 주세요."));
 			gtk_window_set_title(GTK_WINDOW(dlg), _("자세차 자동 측정"));
 			if (win) gtk_window_set_transient_for(GTK_WINDOW(dlg), GTK_WINDOW(win));
 			gtk_dialog_run(GTK_DIALOG(dlg));
@@ -3113,13 +3233,16 @@ void on_auto_measure_clicked(GtkWidget *widget, gpointer data) {
 	op->auto_measure_state = 1;
 	op->auto_measure_countdown = 20;
 	{
-		int dur1 = calc_duration(last_pos1, face_positions[0]);
-		int dur2 = calc_duration(last_pos2, arm_positions[0]);
-		motor_move(1, face_positions[0], dur1, 0);
+		int baseFace = face_positions[g_pos_ui_order[0]];
+		int baseArm = arm_positions[g_pos_ui_order[0]];
+		int dur1 = calc_duration(last_pos1, baseFace);
+		int dur2 = calc_duration(last_pos2, baseArm);
+		motor_ensure_torque_on_for_position_move();
+		motor_move(1, baseFace, dur1, 0);
 		g_usleep(100000);
-		motor_move(2, arm_positions[0], dur2, 0);
-		last_pos1 = face_positions[0];
-		last_pos2 = arm_positions[0];
+		motor_move(2, baseArm, dur2, 0);
+		last_pos1 = baseFace;
+		last_pos2 = baseArm;
 	}
 	motor_close();
 
@@ -3171,9 +3294,14 @@ static gpointer winder_move_thread_func(gpointer data)
 	}
 
 	if (g_atomic_int_get(&s_winder_motor_opened)) {
-		motor_ensure_torque_on();
+		motor_ensure_torque_on_for_winder_move();
 		/* 같은 duration으로 두 서보를 동시에 시작해, 한쪽이 먼저 멈추는 느낌을 줄임 */
 		motor_move(1, a->p1, a->dur, 0);
+		motor_move(2, a->p2, a->dur, 0);
+		/* 와인더 연속 구동 중 ID2 명령 누락 방지용 보강 전송 */
+		g_usleep(50000);
+		motor_write_byte(2, 0x28, 1);
+		motor_write_word(2, 48, WINDER_MOVE_TORQUE_LIMIT);
 		motor_move(2, a->p2, a->dur, 0);
 		last_pos1 = a->p1;
 		last_pos2 = a->p2;
@@ -3210,8 +3338,8 @@ static void winder_move_to_step(struct output_panel *op) {
 		p2 = clamp_arm_hard(arm_positions[pos_idx]);
 	}
 
-	int dur1 = winder_calc_duration(last_pos1, p1);
-	int dur2 = winder_calc_duration(last_pos2, p2);
+	int dur1 = winder_calc_duration(op, last_pos1, p1);
+	int dur2 = winder_calc_duration(op, last_pos2, p2);
 	int dur = (dur1 > dur2) ? dur1 : dur2;
 
 	if (g_atomic_int_get(&s_winder_move_inflight))
@@ -3267,9 +3395,10 @@ void on_winder_clicked(GtkWidget *widget, gpointer data) {
 		gtk_button_set_label(GTK_BUTTON(op->winder_button), "🔄  와치와인더 시작");
 		gtk_style_context_remove_class(gtk_widget_get_style_context(op->winder_button), "btn-winder-stop");
 		gtk_style_context_add_class   (gtk_widget_get_style_context(op->winder_button), "btn-winder");
-		gtk_label_set_text(GTK_LABEL(op->winder_status_label), _("대기 중 — 프리셋을 선택하고 시작하세요"));
+		gtk_label_set_text(GTK_LABEL(op->winder_status_label), _("대기 중 — 프리셋/속도를 선택하고 시작하세요"));
 		// 프리셋 콤보 다시 활성화
 		gtk_widget_set_sensitive(op->winder_preset_combo, TRUE);
+		for (int i = 0; i < 4; i++) if (op->winder_speed_buttons[i]) gtk_widget_set_sensitive(op->winder_speed_buttons[i], TRUE);
 		/* 정지 후 🕘9시(기본)로 복귀 (토크 해제·기준점 표시 동기화는 motor_return_to_9h_pose 내부) */
 		g_idle_add(winder_return_to_9h_safe_idle, op);
 		return;
@@ -3326,6 +3455,7 @@ void on_winder_clicked(GtkWidget *widget, gpointer data) {
 	gtk_style_context_add_class   (gtk_widget_get_style_context(op->winder_button), "btn-winder-stop");
 	// 프리셋 콤보 비활성화 (실행 중 변경 방지)
 	gtk_widget_set_sensitive(op->winder_preset_combo, FALSE);
+	for (int i = 0; i < 4; i++) if (op->winder_speed_buttons[i]) gtk_widget_set_sensitive(op->winder_speed_buttons[i], FALSE);
 
 	op->winder_tick_ms = WINDER_TICK_SEC * 1000;
 	winder_move_to_step(op);
