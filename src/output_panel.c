@@ -179,6 +179,7 @@ static void rebuild_fixed_positions_from_base(void) {
 static void load_coords_from_file(void);
 static void save_coords_to_file(void);
 static void refresh_pos_coord_labels(struct output_panel *op);
+static void auto_measure_apply_ch_return_label(struct output_panel *op);
 static void update_micro_motor_readout_label_ui(struct output_panel *op);
 static gboolean refresh_micro_motor_label_idle(gpointer data);
 static gboolean micro_motor_live_label_idle(gpointer data);
@@ -1141,6 +1142,7 @@ struct output_panel *init_output_panel(struct computer *comp, struct snapshot *s
 		op->pos_coord_labels[i] = NULL;
 	}
 	op->micro_motor_readout_label = NULL;
+	op->auto_measure_pending_ch_return = 0;
 	op->winder_active = 0;
 	op->winder_state = 0;
 	op->winder_countdown = 0;
@@ -1614,7 +1616,7 @@ static void update_winder_speed_buttons(struct output_panel *op)
 		if (!b) continue;
 		char txt[32];
 		int level = i + 1;
-		snprintf(txt, sizeof(txt), "%s%d단", (op->winder_speed_level == level) ? "● " : "", level);
+		snprintf(txt, sizeof(txt), (op->winder_speed_level == level) ? _("● %d단") : _("%d단"), level);
 		gtk_button_set_label(GTK_BUTTON(b), txt);
 	}
 }
@@ -1629,7 +1631,7 @@ static void on_winder_speed_clicked(GtkWidget *widget, gpointer data)
 	update_winder_speed_buttons(op);
 	if (!op->winder_active && op->winder_status_label) {
 		char msg[96];
-		snprintf(msg, sizeof(msg), "대기 중 — 프리셋/속도를 선택하고 시작하세요 (현재 %d단)", level);
+		snprintf(msg, sizeof(msg), _("대기 중 — 프리셋/속도를 선택하고 시작하세요 (현재 %d단)"), level);
 		gtk_label_set_text(GTK_LABEL(op->winder_status_label), msg);
 	}
 }
@@ -1779,6 +1781,17 @@ static void refresh_pos_coord_labels(struct output_panel *op)
 		snprintf(buf, sizeof(buf), _("Face %d  │  Arm %d"), face_positions[i], arm_positions[i]);
 		gtk_label_set_text(GTK_LABEL(op->pos_coord_labels[i]), buf);
 	}
+}
+
+/* 자세차 취소 후: 메인 자동측정 버튼 라벨을 ch 기준 복귀 안내로 바꿈 */
+static void auto_measure_apply_ch_return_label(struct output_panel *op)
+{
+	if (!op || !op->auto_measure_button || !GTK_IS_WIDGET(op->auto_measure_button))
+		return;
+	char buf[112];
+	const char *fmt = _("⏎  %s 기준 복귀");
+	snprintf(buf, sizeof(buf), fmt, g_custom_label[0]);
+	gtk_button_set_label(GTK_BUTTON(op->auto_measure_button), buf);
 }
 
 /* 미세조정 기준과 동일한 논리틱(Present − 시각보정 델타) */
@@ -2410,14 +2423,14 @@ static void micro_rep_stop(void)
 static int micro_read_both_present_fast(int *rF, int *rA)
 {
 	for (int attempt = 0; attempt < 3; attempt++) {
-		*rF = motor_read_present_position(1);
+		*rF = motor_read_present_position_fast(1);
 		g_usleep(45000);
-		*rA = motor_read_present_position(2);
+		*rA = motor_read_present_position_fast(2);
 		if (*rF >= 0 && *rA >= 0)
 			return 1;
-		*rA = motor_read_present_position(2);
+		*rA = motor_read_present_position_fast(2);
 		g_usleep(45000);
-		*rF = motor_read_present_position(1);
+		*rF = motor_read_present_position_fast(1);
 		if (*rF >= 0 && *rA >= 0)
 			return 1;
 		g_usleep(70000);
@@ -3080,11 +3093,62 @@ void on_arm_release_jam_clicked(GtkWidget *widget, gpointer data) {
 	g_thread_new("arm_rel", arm_release_thread_func, op);
 }
 
+/* GTK 메인 루프가 한 번 돌도록 해 라벨 갱신이 즉시 화면에 반영되게 함 (모터 동기 대기 직전) */
+static void op_ui_flush_pending(void)
+{
+	while (g_main_context_pending(NULL))
+		g_main_context_iteration(NULL, FALSE);
+}
+
+static gboolean pending_ch_return_motor_done_idle(gpointer data)
+{
+	struct output_panel *op = (struct output_panel *)data;
+	if (op && op->auto_measure_button && GTK_IS_WIDGET(op->auto_measure_button)) {
+		op->auto_measure_pending_ch_return = 0;
+		gtk_button_set_label(GTK_BUTTON(op->auto_measure_button), _("▶  자세차 자동 측정"));
+		gtk_widget_set_sensitive(op->auto_measure_button, TRUE);
+	}
+	return G_SOURCE_REMOVE;
+}
+
+static gpointer pending_ch_return_motor_thread_func(gpointer data)
+{
+	struct output_panel *op = (struct output_panel *)data;
+	motor_return_to_9h_pose_inner(op);
+	if (op)
+		g_idle_add(pending_ch_return_motor_done_idle, op);
+	return NULL;
+}
+
+static gboolean auto_measure_finish_after_home_idle(gpointer data)
+{
+	struct output_panel *op = (struct output_panel *)data;
+	if (!op)
+		return G_SOURCE_REMOVE;
+	op->auto_measure_pending_ch_return = 0;
+	if (op->auto_measure_button && GTK_IS_WIDGET(op->auto_measure_button))
+		gtk_button_set_label(GTK_BUTTON(op->auto_measure_button), _("▶  자세차 자동 측정"));
+	extern void generate_analysis(struct output_panel *op);
+	generate_analysis(op);
+	return G_SOURCE_REMOVE;
+}
+
+static gpointer auto_measure_finish_home_thread_func(gpointer data)
+{
+	struct output_panel *op = (struct output_panel *)data;
+	if (op)
+		motor_return_to_9h_pose_inner(op);
+	if (op)
+		g_idle_add(auto_measure_finish_after_home_idle, op);
+	return NULL;
+}
+
 static gboolean auto_measure_tick(gpointer data) {
 	struct output_panel *op = (struct output_panel *)data;
 	const int total = POS_FIXED_COUNT;
 
 	if (op->auto_measure_state == 0) {
+		op->auto_measure_timer = 0;
 		return G_SOURCE_REMOVE;
 	}
 
@@ -3117,15 +3181,16 @@ static gboolean auto_measure_tick(gpointer data) {
 	if (op->auto_measure_state > total) {
 		op->auto_measure_state = 0;
 		gtk_button_set_label(GTK_BUTTON(op->auto_measure_button), _("⏎  베이스로 복귀 중..."));
-		motor_return_to_9h_pose(op);
-		gtk_button_set_label(GTK_BUTTON(op->auto_measure_button), _("▶  자세차 자동 측정"));
-		// 측정 완료 → 진단 리포트 생성
-		extern void generate_analysis(struct output_panel *op);
-		generate_analysis(op);
+		op_ui_flush_pending();
+		op->auto_measure_pending_ch_return = 0;
+		op->auto_measure_timer = 0;
+		g_thread_new("auto_home", auto_measure_finish_home_thread_func, op);
 		return G_SOURCE_REMOVE;
 	}
 
 	// 다음 자세 모터 이동
+	gtk_button_set_label(GTK_BUTTON(op->auto_measure_button), _("다음 자세로 이동 중…"));
+	op_ui_flush_pending();
 	motor_init(motor_get_port());
 	motor_ensure_torque_on_for_position_move();
 	{
@@ -3151,16 +3216,34 @@ void on_auto_measure_clicked(GtkWidget *widget, gpointer data) {
 	(void)widget;
 	struct output_panel *op = (struct output_panel *)data;
 
+	/* 취소 직후: 같은 버튼으로 ch(기준) 복귀 (모터는 여기서만 이동) */
+	if (op->auto_measure_pending_ch_return) {
+		if (!op->auto_measure_button || !GTK_IS_WIDGET(op->auto_measure_button))
+			return;
+		if (!gtk_widget_get_sensitive(op->auto_measure_button))
+			return;
+		arm_release_live_poll_stop();
+		gtk_widget_set_sensitive(op->auto_measure_button, FALSE);
+		gtk_button_set_label(GTK_BUTTON(op->auto_measure_button), _("이동 중..."));
+		g_thread_new("ch_return_base", pending_ch_return_motor_thread_func, op);
+		return;
+	}
+
 	if (op->auto_measure_state != 0) {
-		// 취소 → 🕘9시(기본)로 복귀
+		/* 측정 중 재클릭 = 취소. 모터는 즉시 움직이지 않고 CH 복귀 라벨로 전환 */
+		if (op->auto_measure_timer != 0) {
+			g_source_remove(op->auto_measure_timer);
+			op->auto_measure_timer = 0;
+		}
 		op->auto_measure_state = 0;
-		gtk_button_set_label(GTK_BUTTON(op->auto_measure_button), _("⏎  베이스로 복귀 중..."));
-		motor_return_to_9h_pose(op);
-		gtk_button_set_label(GTK_BUTTON(op->auto_measure_button), _("▶  자세차 자동 측정"));
+		op->auto_measure_pending_ch_return = 1;
+		auto_measure_apply_ch_return_label(op);
 		return;
 	}
 
 	// 시작
+	op->auto_measure_pending_ch_return = 0;
+	gtk_button_set_label(GTK_BUTTON(op->auto_measure_button), _("▶  자세차 자동 측정"));
 	arm_release_live_poll_stop();
 	if (!motor_init(motor_get_port())) {
 		GtkWidget *win = gtk_widget_get_toplevel(op->panel);
@@ -3246,7 +3329,7 @@ void on_auto_measure_clicked(GtkWidget *widget, gpointer data) {
 	}
 	motor_close();
 
-	g_timeout_add_seconds(1, auto_measure_tick, op);
+	op->auto_measure_timer = g_timeout_add_seconds(1, auto_measure_tick, op);
 	auto_measure_set_button_countdown_label(op);
 }
 
@@ -3266,13 +3349,32 @@ typedef struct {
 static volatile gint s_winder_move_inflight = 0;
 static volatile gint s_winder_motor_opened = 0;
 
+static gboolean winder_return_done_idle(gpointer data)
+{
+	struct output_panel *op = (struct output_panel *)data;
+	if (op && op->winder_status_label && GTK_IS_WIDGET(op->winder_status_label))
+		gtk_label_set_text(GTK_LABEL(op->winder_status_label),
+			_("대기 중 — 프리셋/속도를 선택하고 시작하세요"));
+	return G_SOURCE_REMOVE;
+}
+
+static gpointer winder_return_to_9h_thread_func(gpointer data)
+{
+	struct output_panel *op = (struct output_panel *)data;
+	if (op)
+		motor_return_to_9h_pose_inner(op);
+	if (op)
+		g_idle_add(winder_return_done_idle, op);
+	return NULL;
+}
+
 static gboolean winder_return_to_9h_safe_idle(gpointer data) {
 	struct output_panel *op = (struct output_panel *)data;
 	if (!op) return G_SOURCE_REMOVE;
 	/* 이동 중이면 대기 (Stop 버튼 눌러도 winder 스레드가 끝날 때까지) */
 	if (g_atomic_int_get(&s_winder_move_inflight))
 		return G_SOURCE_CONTINUE;
-	motor_return_to_9h_pose(op);
+	g_thread_new("winder_home", winder_return_to_9h_thread_func, op);
 	return G_SOURCE_REMOVE;
 }
 
@@ -3392,10 +3494,11 @@ void on_winder_clicked(GtkWidget *widget, gpointer data) {
 		/* 와인더 정지 시 절전 모드 다시 허용 */
 		SetThreadExecutionState(ES_CONTINUOUS);
 #endif
-		gtk_button_set_label(GTK_BUTTON(op->winder_button), "🔄  와치와인더 시작");
+		gtk_button_set_label(GTK_BUTTON(op->winder_button), _("🔄  와치와인더 시작"));
 		gtk_style_context_remove_class(gtk_widget_get_style_context(op->winder_button), "btn-winder-stop");
 		gtk_style_context_add_class   (gtk_widget_get_style_context(op->winder_button), "btn-winder");
-		gtk_label_set_text(GTK_LABEL(op->winder_status_label), _("대기 중 — 프리셋/속도를 선택하고 시작하세요"));
+		gtk_label_set_text(GTK_LABEL(op->winder_status_label), _("와인더: 기준 자세(ch)로 복귀 중…"));
+		op_ui_flush_pending();
 		// 프리셋 콤보 다시 활성화
 		gtk_widget_set_sensitive(op->winder_preset_combo, TRUE);
 		for (int i = 0; i < 4; i++) if (op->winder_speed_buttons[i]) gtk_widget_set_sensitive(op->winder_speed_buttons[i], TRUE);

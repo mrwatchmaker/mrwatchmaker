@@ -211,6 +211,8 @@ struct output_panel {
 	GtkWidget *custom_rows[2];
 	int num_custom;                   // 0~2 (커스텀 1·2)
 	GtkWidget *auto_measure_button;
+	/* 자세차 자동 측정 취소 직후: 동일 버튼으로 ch(기준) 복귀 1회 유도 */
+	int auto_measure_pending_ch_return;
 	/* 기준점 미세조정 행: Present 기준 논리틱 Face/Arm 표시 */
 	GtkWidget *micro_motor_readout_label;
 	int auto_measure_state;

@@ -376,8 +376,15 @@ static int parse_present_in_buffer(const uint8_t *buf, DWORD total, uint8_t serv
 	return -1;
 }
 
-/* STS3215: Present Position 읽기 (addr 0x38, 2바이트). 실패 시 -1 */
-int motor_read_present_position(uint8_t servo_id) {
+static int motor_read_present_position_impl(
+	uint8_t servo_id,
+	int max_attempts,
+	int settle_sleep_id2_ms,
+	int settle_sleep_other_ms,
+	int read_rounds,
+	int round_sleep_ms,
+	int retry_sleep_ms
+) {
 	int out = -1;
 	motor_io_lock();
 	if (hSerial == INVALID_HANDLE_VALUE) {
@@ -397,9 +404,7 @@ int motor_read_present_position(uint8_t servo_id) {
 	for (int i = 0; i < 5; i++) full[2 + i] = packet[i];
 	full[7] = chk;
 
-	for (int attempt = 0, max_attempts = (servo_id == 2) ? 10 : 6;
-	     attempt < max_attempts;
-	     attempt++) {
+	for (int attempt = 0; attempt < max_attempts; attempt++) {
 		motor_drain_rx_soft();
 		{
 			DWORD written = 0;
@@ -407,11 +412,11 @@ int motor_read_present_position(uint8_t servo_id) {
 				continue;
 		}
 		/* 버스 끝 암(ID2)은 응답이 더 늦는 경우가 많음 */
-		Sleep(servo_id == 2 ? 130 : 40);
+		Sleep(servo_id == 2 ? settle_sleep_id2_ms : settle_sleep_other_ms);
 
 		uint8_t buf[128];
 		DWORD total = 0;
-		for (int round = 0; round < 40; round++) {
+		for (int round = 0; round < read_rounds; round++) {
 			DWORD chunk = 0;
 			if (!ReadFile(hSerial, buf + total, sizeof(buf) - total, &chunk, NULL))
 				break;
@@ -424,9 +429,7 @@ int motor_read_present_position(uint8_t servo_id) {
 						goto read_done;
 					}
 				}
-			} else {
-				Sleep(15);
-			}
+			} else Sleep(round_sleep_ms);
 			if (total >= sizeof(buf) - 4)
 				break;
 		}
@@ -437,11 +440,21 @@ int motor_read_present_position(uint8_t servo_id) {
 				goto read_done;
 			}
 		}
-		Sleep(45);
+		Sleep(retry_sleep_ms);
 	}
 read_done:
 	motor_io_unlock();
 	return out;
+}
+
+/* STS3215: Present Position 읽기 (addr 0x38, 2바이트). 실패 시 -1 */
+int motor_read_present_position(uint8_t servo_id) {
+	return motor_read_present_position_impl(servo_id, (servo_id == 2) ? 10 : 6, 130, 40, 40, 15, 45);
+}
+
+/* UI 반응성 우선: 짧은 타임아웃/적은 재시도로 빠르게 반환 */
+int motor_read_present_position_fast(uint8_t servo_id) {
+	return motor_read_present_position_impl(servo_id, (servo_id == 2) ? 3 : 2, 70, 20, 10, 8, 15);
 }
 
 /* Base(9시) 이동 후: Present 암 위치가 목표(goal_arm)에서 많이 벗어나면 쳐박힘으로 보고 토크 해제.

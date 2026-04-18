@@ -11,6 +11,7 @@ void motor_write_word(uint8_t servo_id, uint8_t addr, int value);     /* 2바이
 void motor_set_visual_goal_deltas(int delta_face, int delta_arm); /* Android setVisualGoalDeltas: motor_move 시 목표에 더함 */
 void motor_get_visual_goal_deltas(int *delta_face, int *delta_arm);
 int  motor_read_present_position(uint8_t servo_id);  /* Present Position 읽기, 실패 시 -1 */
+int  motor_read_present_position_fast(uint8_t servo_id); /* 빠른 Present 읽기(짧은 타임아웃/재시도) */
 int  motor_check_arm_stuck_after_9h(int goal_arm);  /* 목표 암 틱과 Present 비교, 1=토크 해제함 */
 void motor_disable_torque_all(void); /* ID1/ID2 토크 OFF */
 void motor_release_motors_for_jam(void); /* Face 토크 먼저 끈 뒤 암 완전 해제 (Android 암 풀기와 동일) */
