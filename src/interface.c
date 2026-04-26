@@ -25,6 +25,8 @@
 #include <libgen.h>
 #include <ctype.h>
 #include <string.h>
+#include <stdlib.h>
+#include <signal.h>
 #ifdef _WIN32
 #include <windows.h>
 #endif
@@ -146,6 +148,45 @@ static gboolean input_cal(GtkSpinButton *spin, double *val, gpointer data)
 	return TRUE;
 }
 
+static struct main_window *g_main_window_for_exit = NULL;
+static volatile sig_atomic_t g_exit_home_attempted = 0;
+
+static void ensure_home_on_exit(struct main_window *w, int fast)
+{
+	if (g_exit_home_attempted)
+		return;
+	g_exit_home_attempted = 1;
+	if (fast) {
+		op_emergency_home_9h();
+		return;
+	}
+	if (w && w->active_panel)
+		op_shutdown_motor_home_9h(w->active_panel);
+	else
+		op_emergency_home_9h();
+}
+
+static void on_process_exit_atexit(void)
+{
+	ensure_home_on_exit(g_main_window_for_exit, 1);
+}
+
+static void on_termination_signal(int sig)
+{
+	/* 가능한 경우 CH 복귀 시도 후 종료 */
+	ensure_home_on_exit(g_main_window_for_exit, 1);
+	signal(sig, SIG_DFL);
+	raise(sig);
+}
+
+static void install_exit_safety_handlers(void)
+{
+	atexit(on_process_exit_atexit);
+	signal(SIGINT, on_termination_signal);
+	signal(SIGTERM, on_termination_signal);
+	signal(SIGABRT, on_termination_signal);
+}
+
 static void on_shutdown(GApplication *app, void *p)
 {
 	UNUSED(p);
@@ -153,12 +194,12 @@ static void on_shutdown(GApplication *app, void *p)
 	struct main_window *w = g_object_get_data(G_OBJECT(app), "main-window");
 	if(w) {
 		save_config(w);
-		if (w->active_panel)
-			op_shutdown_motor_home_9h(w->active_panel);
+		ensure_home_on_exit(w, 0);
 		computer_destroy(w->computer);
 		op_destroy(w->active_panel);
 		close_config(w);
 		free(w);
+		g_main_window_for_exit = NULL;
 	}
 	/* 프로그램 종료 시 토크를 확실히 꺼서 '달달달' 지속 방지 */
 	motor_init(motor_get_port());
@@ -212,6 +253,8 @@ static void kill_computer(struct main_window *w)
 
 static gboolean quit(struct main_window *w)
 {
+	/* 긴급 종료(창 닫기/메뉴 종료)에서 shutdown까지 기다리지 말고 즉시 CH 복귀 시도 */
+	ensure_home_on_exit(w, 1);
 	g_source_remove(w->kick_timeout);
 	g_source_remove(w->save_timeout);
 	w->zombie = 1;
@@ -1121,6 +1164,7 @@ static void start_interface(GApplication* app, void *p)
 	initialize_palette();
 
 	struct main_window *w = malloc(sizeof(struct main_window));
+	install_exit_safety_handlers();
 
 	if(start_portaudio(&w->nominal_sr, &real_sr)) {
 		g_application_quit(app);
@@ -1177,6 +1221,7 @@ static void start_interface(GApplication* app, void *p)
 #endif
 
 	g_object_set_data(G_OBJECT(app), "main-window", w);
+	g_main_window_for_exit = w;
 }
 
 static void handle_activate(GApplication* app, void *p)

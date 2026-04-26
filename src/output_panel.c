@@ -181,6 +181,10 @@ static void save_coords_to_file(void);
 static void refresh_pos_coord_labels(struct output_panel *op);
 static void auto_measure_apply_ch_return_label(struct output_panel *op);
 static void update_micro_motor_readout_label_ui(struct output_panel *op);
+static void update_manual_measure_button_visibility(struct output_panel *op, int face_logical, int arm_logical, int has_valid_baseline);
+static void show_purchase_required_dialog(GtkWidget *parent, const char *title);
+static int try_open_purchase_url(GtkWindow *parent);
+static void op_ui_flush_pending(void);
 static gboolean refresh_micro_motor_label_idle(gpointer data);
 static gboolean micro_motor_live_label_idle(gpointer data);
 static void micro_motor_schedule_live_readout(int face_log, int arm_log, struct output_panel *op);
@@ -1137,9 +1141,15 @@ struct output_panel *init_output_panel(struct computer *comp, struct snapshot *s
 	op->manual_measure_target = -1;
 	op->manual_measure_countdown = 0;
 	op->manual_measure_timer = 0;
+	op->manual_measure_hint_label = NULL;
+	op->manual_measure_status_label = NULL;
 	for (int i = 0; i < POS_FIXED_COUNT; i++) {
 		op->manual_measure_buttons[i] = NULL;
 		op->pos_coord_labels[i] = NULL;
+		op->pos_rate[i] = 0.0;
+		op->pos_amp[i] = 0.0;
+		op->pos_be[i] = 0.0;
+		op->pos_measured[i] = 0;
 	}
 	op->micro_motor_readout_label = NULL;
 	op->auto_measure_pending_ch_return = 0;
@@ -1354,6 +1364,19 @@ struct output_panel *init_output_panel(struct computer *comp, struct snapshot *s
 		gtk_grid_attach(GTK_GRID(pos_grid), op->pos_coord_labels[i], 2, row, 1, 1);
 		gtk_grid_attach(GTK_GRID(pos_grid), measure_btn,            3, row, 1, 1);
 	}
+	/* 첫 실행 시 기준점 읽기/미세조정 전에는 자세별 측정 버튼 숨김 */
+	update_manual_measure_button_visibility(op, 0, 0, 0);
+	op->manual_measure_hint_label = gtk_label_new(
+		_("CH 기준점 오차가 큽니다 (허용 ±100).\n기준점 미세조정 후 자세별 측정 버튼이 표시됩니다."));
+	gtk_style_context_add_class(gtk_widget_get_style_context(op->manual_measure_hint_label), "pos-value");
+	gtk_widget_set_halign(op->manual_measure_hint_label, GTK_ALIGN_START);
+	gtk_label_set_line_wrap(GTK_LABEL(op->manual_measure_hint_label), TRUE);
+	gtk_box_pack_start(GTK_BOX(pos_vbox), op->manual_measure_hint_label, FALSE, FALSE, 2);
+	op->manual_measure_status_label = gtk_label_new("");
+	gtk_style_context_add_class(gtk_widget_get_style_context(op->manual_measure_status_label), "pos-value");
+	gtk_widget_set_halign(op->manual_measure_status_label, GTK_ALIGN_START);
+	gtk_label_set_line_wrap(GTK_LABEL(op->manual_measure_status_label), TRUE);
+	gtk_box_pack_start(GTK_BOX(pos_vbox), op->manual_measure_status_label, FALSE, FALSE, 2);
 
 	// 버튼 행
 	GtkWidget *btn_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
@@ -1588,11 +1611,12 @@ static int lerp_int(int a, int b, int num, int den) {
 static int winder_speed_percent(int level)
 {
 	switch (level) {
-	case 1: return 135; /* 가장 느림 */
-	case 2: return 100; /* 기본 */
-	case 3: return 75;  /* 빠름 */
-	case 4: return 58;  /* 가장 빠름 */
-	default: return 100;
+	/* 목표 이동시간(ms)에 곱함 — 값이 클수록 느림. 단계별 체감 차 확대(2025 조정). */
+	case 1: return 205; /* 가장 느림 */
+	case 2: return 88;   /* 기본보다 약간 빠름 */
+	case 3: return 58;   /* 빠름 */
+	case 4: return 38;   /* 가장 빠름 */
+	default: return 88;
 	}
 }
 
@@ -1800,11 +1824,47 @@ static void update_micro_motor_readout_label_ui(struct output_panel *op)
 	if (!op || !op->micro_motor_readout_label || !GTK_IS_WIDGET(op->micro_motor_readout_label))
 		return;
 	char buf[160];
+	int cur_face = micro_adj_base_face;
+	int cur_arm = micro_adj_base_arm;
+	int cur_valid = micro_adj_base_valid;
 	if (micro_adj_base_valid)
 		snprintf(buf, sizeof(buf), _("Face %d  │  Arm %d"), micro_adj_base_face, micro_adj_base_arm);
-	else
+	else {
+		cur_face = last_pos1;
+		cur_arm = last_pos2;
 		snprintf(buf, sizeof(buf), _("Face %d  │  Arm %d  (읽기 재시도 중)"), last_pos1, last_pos2);
+	}
 	gtk_label_set_text(GTK_LABEL(op->micro_motor_readout_label), buf);
+	update_manual_measure_button_visibility(op, cur_face, cur_arm, cur_valid);
+}
+
+static void update_manual_measure_button_visibility(struct output_panel *op, int face_logical, int arm_logical, int has_valid_baseline)
+{
+	if (!op)
+		return;
+	int visible = 0;
+	int has_any_baseline = has_valid_baseline || (face_logical >= 0 && arm_logical >= 0);
+	if (has_any_baseline) {
+		int dF = tick_delta_signed(face_positions[BASE_SLOT_INDEX], face_logical);
+		int dA = tick_delta_signed(arm_positions[BASE_SLOT_INDEX], arm_logical);
+		visible = (abs(dF) < POS_AUTO_MEASURE_BASELINE_MAX_DELTA_TICKS
+		        && abs(dA) < POS_AUTO_MEASURE_BASELINE_MAX_DELTA_TICKS);
+	}
+	for (int i = 0; i < POS_FIXED_COUNT; i++) {
+		if (op->manual_measure_buttons[i] && GTK_IS_WIDGET(op->manual_measure_buttons[i])) {
+			if (visible) gtk_widget_show(op->manual_measure_buttons[i]);
+			else gtk_widget_hide(op->manual_measure_buttons[i]);
+		}
+	}
+	if (op->manual_measure_hint_label && GTK_IS_WIDGET(op->manual_measure_hint_label)) {
+		if (visible) {
+			gtk_widget_hide(op->manual_measure_hint_label);
+		} else {
+			gtk_label_set_text(GTK_LABEL(op->manual_measure_hint_label),
+				_("CH 기준점 오차가 큽니다 (허용 ±100).\n기준점 미세조정 후 자세별 측정 버튼이 표시됩니다."));
+			gtk_widget_show(op->manual_measure_hint_label);
+		}
+	}
 }
 
 static gboolean refresh_micro_motor_label_idle(gpointer data)
@@ -2157,6 +2217,39 @@ static void motor_return_to_9h_pose(struct output_panel *op)
 	motor_return_to_9h_pose_inner(op);
 }
 
+/* 종료 경로 전용: 너무 오래 대기하지 않는 빠른 CH 복귀 */
+static void motor_return_to_9h_pose_quick_inner(void)
+{
+	int p1 = clamp_face(face_positions[BASE_SLOT_INDEX]);
+	int p2 = clamp_arm(arm_positions[BASE_SLOT_INDEX]);
+	int dur1, dur2, wait_ms;
+
+	arm_release_live_poll_stop();
+	if (!motor_init(motor_get_port()))
+		return;
+	motor_ensure_torque_on_for_position_move();
+	dur1 = calc_duration(last_pos1, p1);
+	dur2 = calc_duration(last_pos2, p2);
+	/* 종료 시 체감 정지 방지: 이동 시간을 짧게 상한 */
+	if (dur1 > 1800) dur1 = 1800;
+	if (dur2 > 1800) dur2 = 1800;
+	if (dur1 < 700) dur1 = 700;
+	if (dur2 < 700) dur2 = 700;
+	motor_move(1, p1, dur1, 0);
+	g_usleep(90000);
+	motor_move(2, p2, dur2, 0);
+	wait_ms = (dur2 > dur1 ? dur2 : dur1);
+	g_usleep(wait_ms * 1000);
+	motor_disable_torque_all();
+	g_usleep(50000);
+	{
+		int r1 = motor_read_present_position(1);
+		int r2 = motor_read_present_position(2);
+		micro_adj_refresh_from_present_reads(r1, r2, NULL);
+	}
+	motor_close();
+}
+
 void op_shutdown_motor_home_9h(struct output_panel *op)
 {
 	if (!op)
@@ -2167,6 +2260,12 @@ void op_shutdown_motor_home_9h(struct output_panel *op)
 	}
 	op->winder_active = 0;
 	motor_return_to_9h_pose_inner(NULL);
+}
+
+void op_emergency_home_9h(void)
+{
+	/* 종료 루트(atexit/signal)에서도 UI 없이 CH 복귀를 최대한 시도 (빠른 경로) */
+	motor_return_to_9h_pose_quick_inner();
 }
 
 /* 시작 시 서보 Present → last_pos / 스핀 기본값 (이동 시간이 실제 위치에서 계산되도록) */
@@ -2209,6 +2308,8 @@ static void manual_reset_button_labels(struct output_panel *op) {
 			gtk_button_set_label(GTK_BUTTON(op->manual_measure_buttons[i]), buf);
 		}
 	}
+	if (op->manual_measure_status_label && GTK_IS_WIDGET(op->manual_measure_status_label))
+		gtk_label_set_text(GTK_LABEL(op->manual_measure_status_label), "");
 }
 
 static gboolean manual_measure_tick(gpointer data) {
@@ -2238,13 +2339,22 @@ static gboolean manual_measure_tick(gpointer data) {
 		op->pos_amp[idx]      = amp;
 		op->pos_be[idx]       = be;
 		op->pos_measured[idx] = 1;
-		/* 진단 리포트 갱신 */
-		extern void generate_analysis(struct output_panel *op);
-		generate_analysis(op);
 		/* 수동 자세별 측정 후에도 🕘9시(기본)로 복귀 (자동 측정과 동일) */
 		if (op->manual_measure_buttons[idx])
-			gtk_button_set_label(GTK_BUTTON(op->manual_measure_buttons[idx]), _("⏎  베이스로 복귀 중..."));
+			gtk_button_set_label(GTK_BUTTON(op->manual_measure_buttons[idx]),
+				_("⏎  베이스로 복귀 중..."));
+		if (op->manual_measure_status_label && GTK_IS_WIDGET(op->manual_measure_status_label))
+			gtk_label_set_text(GTK_LABEL(op->manual_measure_status_label),
+				_("베이스로 복귀 중... 복귀 후 자세차 진단 리포트가 실행됩니다."));
+		if (op->winder_status_label && GTK_IS_WIDGET(op->winder_status_label))
+			gtk_label_set_text(GTK_LABEL(op->winder_status_label),
+				_("베이스로 복귀 중... 복귀 후 자세차 진단 리포트가 실행됩니다."));
+		/* 무거운 모터 이동 전에 UI 문구를 먼저 화면에 반영 */
+		op_ui_flush_pending();
 		motor_return_to_9h_pose(op);
+		/* 베이스 복귀 후 진단 리포트 실행 */
+		extern void generate_analysis(struct output_panel *op);
+		generate_analysis(op);
 	}
 
 	manual_reset_button_labels(op);
@@ -2326,14 +2436,7 @@ void on_manual_measure_clicked(GtkWidget *widget, gpointer data) {
 	if (!motor_init(motor_get_port())) {
 		GtkWidget *win = gtk_widget_get_toplevel(op->panel);
 		if (!GTK_IS_WINDOW(win)) win = NULL;
-		GtkWidget *dlg = gtk_message_dialog_new(GTK_WINDOW(win),
-			GTK_DIALOG_MODAL, GTK_MESSAGE_ERROR, GTK_BUTTONS_OK, NULL);
-		gtk_message_dialog_set_markup(GTK_MESSAGE_DIALOG(dlg),
-			_("서보모터가 연결되어 있지 않거나 <b>aitimebot</b>이 필요합니다.\n<a href=\"http://mrwatchmaker.com\">mrwatchmaker.com</a> 에서 구매해 주세요."));
-		gtk_window_set_title(GTK_WINDOW(dlg), _("장치 연결 오류"));
-		if (win) gtk_window_set_transient_for(GTK_WINDOW(dlg), GTK_WINDOW(win));
-		gtk_dialog_run(GTK_DIALOG(dlg));
-		gtk_widget_destroy(dlg);
+		show_purchase_required_dialog(win, _("장치 연결 오류"));
 		return;
 	}
 	motor_close();
@@ -2361,14 +2464,65 @@ static void get_positional_slot_face_arm(struct output_panel *op, int slot_idx, 
 static void show_servo_connect_error_dialog(struct output_panel *op) {
 	GtkWidget *win = gtk_widget_get_toplevel(op->panel);
 	if (!GTK_IS_WINDOW(win)) win = NULL;
-	GtkWidget *dlg = gtk_message_dialog_new(GTK_WINDOW(win),
-		GTK_DIALOG_MODAL, GTK_MESSAGE_ERROR, GTK_BUTTONS_OK, NULL);
+	show_purchase_required_dialog(win, _("장치 연결 오류"));
+}
+
+static void show_purchase_required_dialog(GtkWidget *parent, const char *title)
+{
+	const char *purchase_url = "https://mrwatchmaker.com";
+	GtkWidget *dlg = gtk_message_dialog_new(GTK_WINDOW(parent),
+		GTK_DIALOG_MODAL, GTK_MESSAGE_ERROR, GTK_BUTTONS_NONE, NULL);
 	gtk_message_dialog_set_markup(GTK_MESSAGE_DIALOG(dlg),
-		_("서보모터가 연결되어 있지 않거나 <b>aitimebot</b>이 필요합니다.\n<a href=\"http://mrwatchmaker.com\">mrwatchmaker.com</a> 에서 구매해 주세요."));
-	gtk_window_set_title(GTK_WINDOW(dlg), _("장치 연결 오류"));
-	if (win) gtk_window_set_transient_for(GTK_WINDOW(dlg), GTK_WINDOW(win));
-	gtk_dialog_run(GTK_DIALOG(dlg));
+		_("서보모터가 연결되어 있지 않거나 <b>aitimebot</b>이 필요합니다.\n"
+		  "아래 주소로 접속해 구매/설치를 진행해 주세요.\n"
+		  "주소: https://mrwatchmaker.com"));
+	gtk_dialog_add_button(GTK_DIALOG(dlg), _("닫기"), GTK_RESPONSE_CLOSE);
+	gtk_dialog_add_button(GTK_DIALOG(dlg), _("주소 복사"), GTK_RESPONSE_APPLY);
+	gtk_dialog_add_button(GTK_DIALOG(dlg), _("구매 페이지 열기"), GTK_RESPONSE_ACCEPT);
+	gtk_window_set_title(GTK_WINDOW(dlg), title ? title : _("장치 연결 오류"));
+	if (parent) gtk_window_set_transient_for(GTK_WINDOW(dlg), GTK_WINDOW(parent));
+
+	for (;;) {
+		int resp = gtk_dialog_run(GTK_DIALOG(dlg));
+		if (resp == GTK_RESPONSE_ACCEPT) {
+			if (!try_open_purchase_url(GTK_WINDOW(parent))) {
+				GtkWidget *win = parent;
+				if (!GTK_IS_WINDOW(win)) win = NULL;
+				GtkWidget *fail = gtk_message_dialog_new(GTK_WINDOW(win),
+					GTK_DIALOG_MODAL, GTK_MESSAGE_WARNING, GTK_BUTTONS_OK,
+					"%s", _("브라우저 자동 열기에 실패했습니다.\n직접 접속해 주세요: https://mrwatchmaker.com"));
+				gtk_window_set_title(GTK_WINDOW(fail), _("구매 페이지 열기"));
+				if (win) gtk_window_set_transient_for(GTK_WINDOW(fail), GTK_WINDOW(win));
+				gtk_dialog_run(GTK_DIALOG(fail));
+				gtk_widget_destroy(fail);
+			}
+			break;
+		}
+		if (resp == GTK_RESPONSE_APPLY) {
+			GtkClipboard *cb = gtk_clipboard_get(GDK_SELECTION_CLIPBOARD);
+			if (cb) gtk_clipboard_set_text(cb, purchase_url, -1);
+			continue;
+		}
+		break;
+	}
 	gtk_widget_destroy(dlg);
+}
+
+static int try_open_purchase_url(GtkWindow *parent)
+{
+	const char *purchase_url = "https://mrwatchmaker.com";
+	GError *err = NULL;
+	gtk_show_uri_on_window(parent, purchase_url, GDK_CURRENT_TIME, &err);
+	if (!err) return 1;
+	g_warning("open purchase url (gtk) failed: %s", err->message ? err->message : "unknown");
+	g_error_free(err);
+#ifdef _WIN32
+	{
+		HINSTANCE h = ShellExecuteA(NULL, "open", purchase_url, NULL, NULL, SW_SHOWNORMAL);
+		if ((INT_PTR)h > 32) return 1;
+	}
+#endif
+	return 0;
 }
 
 static GMutex micro_rep_mutex;
@@ -2390,6 +2544,7 @@ static gboolean micro_motor_live_label_idle(gpointer data)
 		char buf[160];
 		snprintf(buf, sizeof(buf), _("Face %d  │  Arm %d"), s_micro_live_face, s_micro_live_arm);
 		gtk_label_set_text(GTK_LABEL(s_micro_live_op->micro_motor_readout_label), buf);
+		update_manual_measure_button_visibility(s_micro_live_op, s_micro_live_face, s_micro_live_arm, 1);
 	}
 	return G_SOURCE_REMOVE;
 }
@@ -3248,14 +3403,7 @@ void on_auto_measure_clicked(GtkWidget *widget, gpointer data) {
 	if (!motor_init(motor_get_port())) {
 		GtkWidget *win = gtk_widget_get_toplevel(op->panel);
 		if (!GTK_IS_WINDOW(win)) win = NULL;
-		GtkWidget *dlg = gtk_message_dialog_new(GTK_WINDOW(win),
-			GTK_DIALOG_MODAL, GTK_MESSAGE_ERROR, GTK_BUTTONS_OK, NULL);
-		gtk_message_dialog_set_markup(GTK_MESSAGE_DIALOG(dlg),
-			_("서보모터가 연결되어 있지 않거나 <b>aitimebot</b>이 필요합니다.\n<a href=\"http://mrwatchmaker.com\">mrwatchmaker.com</a> 에서 구매해 주세요."));
-		gtk_window_set_title(GTK_WINDOW(dlg), _("장치 연결 오류"));
-		if (win) gtk_window_set_transient_for(GTK_WINDOW(dlg), GTK_WINDOW(win));
-		gtk_dialog_run(GTK_DIALOG(dlg));
-		gtk_widget_destroy(dlg);
+		show_purchase_required_dialog(win, _("장치 연결 오류"));
 		op->auto_measure_state = 0;
 		return;
 	}
@@ -3515,14 +3663,7 @@ void on_winder_clicked(GtkWidget *widget, gpointer data) {
 	if (!motor_init(motor_get_port())) {
 		GtkWidget *win = gtk_widget_get_toplevel(op->panel);
 		if (!GTK_IS_WINDOW(win)) win = NULL;
-		GtkWidget *dlg = gtk_message_dialog_new(GTK_WINDOW(win),
-			GTK_DIALOG_MODAL, GTK_MESSAGE_ERROR, GTK_BUTTONS_OK, NULL);
-		gtk_message_dialog_set_markup(GTK_MESSAGE_DIALOG(dlg),
-			_("서보모터가 연결되어 있지 않거나 <b>aitimebot</b>이 필요합니다.\n<a href=\"http://mrwatchmaker.com\">mrwatchmaker.com</a> 에서 구매해 주세요."));
-		gtk_window_set_title(GTK_WINDOW(dlg), _("장치 연결 오류"));
-		if (win) gtk_window_set_transient_for(GTK_WINDOW(dlg), GTK_WINDOW(win));
-		gtk_dialog_run(GTK_DIALOG(dlg));
-		gtk_widget_destroy(dlg);
+		show_purchase_required_dialog(win, _("장치 연결 오류"));
 		return;
 	}
 	arm_release_live_poll_stop();
@@ -3531,6 +3672,44 @@ void on_winder_clicked(GtkWidget *widget, gpointer data) {
 	{
 		int r1 = motor_read_present_position(1);
 		int r2 = motor_read_present_position(2);
+		int vdF, vdA;
+		int lf, la, dF, dA;
+		GtkWidget *win;
+		GtkWidget *dlg;
+		if (r1 < 0 || r2 < 0) {
+			motor_disable_torque_all();
+			motor_close();
+			win = gtk_widget_get_toplevel(op->panel);
+			if (!GTK_IS_WINDOW(win)) win = NULL;
+			dlg = gtk_message_dialog_new(GTK_WINDOW(win),
+				GTK_DIALOG_MODAL, GTK_MESSAGE_ERROR, GTK_BUTTONS_OK,
+				"%s", _("서보 위치를 읽지 못했습니다. USB·서보를 확인한 뒤 다시 시도하세요."));
+			gtk_window_set_title(GTK_WINDOW(dlg), _("와치와인더"));
+			if (win) gtk_window_set_transient_for(GTK_WINDOW(dlg), GTK_WINDOW(win));
+			gtk_dialog_run(GTK_DIALOG(dlg));
+			gtk_widget_destroy(dlg);
+			return;
+		}
+		motor_get_visual_goal_deltas(&vdF, &vdA);
+		lf = logical_face_from_raw(r1, vdF);
+		la = logical_arm_from_raw(r2, vdA);
+		dF = tick_delta_signed(face_positions[BASE_SLOT_INDEX], lf);
+		dA = tick_delta_signed(arm_positions[BASE_SLOT_INDEX], la);
+		if (abs(dF) >= POS_AUTO_MEASURE_BASELINE_MAX_DELTA_TICKS
+		    || abs(dA) >= POS_AUTO_MEASURE_BASELINE_MAX_DELTA_TICKS) {
+			motor_disable_torque_all();
+			motor_close();
+			win = gtk_widget_get_toplevel(op->panel);
+			if (!GTK_IS_WINDOW(win)) win = NULL;
+			dlg = gtk_message_dialog_new(GTK_WINDOW(win),
+				GTK_DIALOG_MODAL, GTK_MESSAGE_WARNING, GTK_BUTTONS_OK,
+				"%s", _("기준점이 맞지 않습니다. 기준점 미세조정으로 ch 자세를 맞춘 뒤 와치와인더를 실행해 주세요."));
+			gtk_window_set_title(GTK_WINDOW(dlg), _("와치와인더"));
+			if (win) gtk_window_set_transient_for(GTK_WINDOW(dlg), GTK_WINDOW(win));
+			gtk_dialog_run(GTK_DIALOG(dlg));
+			gtk_widget_destroy(dlg);
+			return;
+		}
 		if (r1 >= 0) {
 			last_pos1 = clamp_face_hard(r1);
 			g_spin_face = last_pos1;
@@ -3586,6 +3765,11 @@ void generate_analysis(struct output_panel *op)
 
 	for (int i = 0; i < total; i++) {
 		if (!op->pos_measured[i]) continue;
+		/* 비정상/메모리 찌꺼기 값 방어: 리포트 계산에서 제외 */
+		if (!isfinite(op->pos_rate[i]) || !isfinite(op->pos_amp[i]) || !isfinite(op->pos_be[i]))
+			continue;
+		if (fabs(op->pos_rate[i]) > 10000.0 || op->pos_amp[i] < 0.0 || op->pos_amp[i] > 10000.0 || op->pos_be[i] < 0.0 || op->pos_be[i] > 10000.0)
+			continue;
 		count++;
 		sum_rate += op->pos_rate[i];
 		sum_amp  += op->pos_amp[i];
@@ -3719,6 +3903,10 @@ void generate_analysis(struct output_panel *op)
 		"  ─────────────────────────────────────────\n");
 	for (int i = 0; i < total; i++) {
 		if (!op->pos_measured[i]) continue;
+		if (!isfinite(op->pos_rate[i]) || !isfinite(op->pos_amp[i]) || !isfinite(op->pos_be[i]))
+			continue;
+		if (fabs(op->pos_rate[i]) > 10000.0 || op->pos_amp[i] < 0.0 || op->pos_amp[i] > 10000.0 || op->pos_be[i] < 0.0 || op->pos_be[i] > 10000.0)
+			continue;
 		{ char *ts = g_strdup_printf("  %-11s  %+6.1f s/d  %4.0f°   %.2f ms\n", pos_names[i], op->pos_rate[i], op->pos_amp[i], op->pos_be[i]); atv_append(buf,&it,"tag_pos", ts); g_free(ts); }
 	}
 	atv_append(buf,&it,"tag_sep",

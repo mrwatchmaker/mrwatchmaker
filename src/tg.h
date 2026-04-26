@@ -220,6 +220,8 @@ struct output_panel {
 	int auto_measure_countdown;
 	// 수동 자세별 측정(버튼)
 	GtkWidget *manual_measure_buttons[8]; // 0..5=고정 6자세, 6..7=추가 커스텀
+	GtkWidget *manual_measure_hint_label; // 기준점 미정렬 시 안내 문구
+	GtkWidget *manual_measure_status_label; // 수동 측정/복귀 진행 안내
 	int manual_measure_target;            // -1=비활성, 0..7=타겟
 	int manual_measure_countdown;         // 초 카운트다운
 	guint manual_measure_timer;
@@ -268,6 +270,8 @@ void op_set_border(struct output_panel *op, int i);
 void op_destroy(struct output_panel *op);
 /* 프로그램 종료 직전: 와인더 타이머 정지 후 🕘9시(기본)로 이동·토크 해제 (op 해제 전에 호출) */
 void op_shutdown_motor_home_9h(struct output_panel *op);
+/* 비정상 종료 대응용: UI 참조 없이 CH(기본) 복귀·토크 해제만 시도 */
+void op_emergency_home_9h(void);
 
 /* interface.c */
 struct main_window {
