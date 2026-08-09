@@ -16,13 +16,127 @@
     51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 */
 
-#include "tg.h"
+#include "mrwatchmaker.h"
 #include <portaudio.h>
 
 float pa_buffers[2][PA_BUFF_SIZE];
 int write_pointer = 0;
 uint64_t timestamp = 0;
 pthread_mutex_t audio_mutex;
+static PaStream *g_stream = NULL;
+static int g_preferred_input_device = -1; /* -1=auto */
+static int g_active_input_device = -1;
+
+static int str_contains_nocase(const char *s, const char *needle)
+{
+	if (!s || !needle)
+		return 0;
+	gchar *ls = g_ascii_strdown(s, -1);
+	gchar *ln = g_ascii_strdown(needle, -1);
+	int hit = (strstr(ls, ln) != NULL);
+	g_free(ls);
+	g_free(ln);
+	return hit;
+}
+
+int audio_device_looks_usb(int pa_device_index)
+{
+	const PaDeviceInfo *di;
+	const PaHostApiInfo *ha;
+	if (pa_device_index < 0)
+		return 0;
+	di = Pa_GetDeviceInfo(pa_device_index);
+	if (!di)
+		return 0;
+	if (str_contains_nocase(di->name, "usb"))
+		return 1;
+	ha = Pa_GetHostApiInfo(di->hostApi);
+	if (ha && str_contains_nocase(ha->name, "usb"))
+		return 1;
+	return 0;
+}
+
+const char *audio_get_device_display_name(int pa_device_index)
+{
+	const PaDeviceInfo *di;
+	if (pa_device_index < 0)
+		return "Auto (USB first)";
+	di = Pa_GetDeviceInfo(pa_device_index);
+	if (!di || !di->name)
+		return "Unknown device";
+	return di->name;
+}
+
+int audio_get_input_device_count(void)
+{
+	int i, cnt = 0;
+	int n = Pa_GetDeviceCount();
+	if (n < 0)
+		return 0;
+	for (i = 0; i < n; i++) {
+		const PaDeviceInfo *di = Pa_GetDeviceInfo(i);
+		if (di && di->maxInputChannels > 0)
+			cnt++;
+	}
+	return cnt;
+}
+
+int audio_get_nth_input_device_index(int nth)
+{
+	int i, k = 0;
+	int n = Pa_GetDeviceCount();
+	if (n < 0 || nth < 0)
+		return -1;
+	for (i = 0; i < n; i++) {
+		const PaDeviceInfo *di = Pa_GetDeviceInfo(i);
+		if (di && di->maxInputChannels > 0) {
+			if (k == nth)
+				return i;
+			k++;
+		}
+	}
+	return -1;
+}
+
+int audio_set_preferred_input_device(int pa_device_index)
+{
+	g_preferred_input_device = pa_device_index;
+	return 0;
+}
+
+int audio_get_preferred_input_device(void)
+{
+	return g_preferred_input_device;
+}
+
+int audio_get_active_input_device(void)
+{
+	return g_active_input_device;
+}
+
+static int choose_input_device(void)
+{
+	int i;
+	int preferred = g_preferred_input_device;
+	int n = Pa_GetDeviceCount();
+	if (n < 0)
+		return paNoDevice;
+
+	if (preferred >= 0) {
+		const PaDeviceInfo *di = Pa_GetDeviceInfo(preferred);
+		if (di && di->maxInputChannels > 0)
+			return preferred;
+	}
+
+	/* auto: USB 입력 우선 */
+	for (i = 0; i < n; i++) {
+		const PaDeviceInfo *di = Pa_GetDeviceInfo(i);
+		if (di && di->maxInputChannels > 0 && audio_device_looks_usb(i))
+			return i;
+	}
+
+	return Pa_GetDefaultInputDevice();
+}
 
 static int paudio_callback(const void *input_buffer,
 			   void *output_buffer,
@@ -57,7 +171,7 @@ static int paudio_callback(const void *input_buffer,
 
 int start_portaudio(int *nominal_sample_rate, double *real_sample_rate)
 {
-	PaStream *stream;
+	PaStreamParameters in;
 
 	if(pthread_mutex_init(&audio_mutex,NULL)) {
 		error("Failed to setup audio mutex");
@@ -76,36 +190,51 @@ int start_portaudio(int *nominal_sample_rate, double *real_sample_rate)
 	}
 #endif
 
-	PaDeviceIndex default_input = Pa_GetDefaultInputDevice();
-	if(default_input == paNoDevice) {
-		error("No default audio input device found");
+	PaDeviceIndex input_device = choose_input_device();
+	if(input_device == paNoDevice) {
+		error("No audio input device found");
 		return 1;
 	}
-	long channels = Pa_GetDeviceInfo(default_input)->maxInputChannels;
+	const PaDeviceInfo *di = Pa_GetDeviceInfo(input_device);
+	long channels = di ? di->maxInputChannels : 0;
 	if(channels == 0) {
-		error("Default audio device has no input channels");
+		error("Selected audio device has no input channels");
 		return 1;
 	}
 	if(channels > 2) channels = 2;
-	err = Pa_OpenDefaultStream(&stream,channels,0,paFloat32,PA_SAMPLE_RATE,paFramesPerBufferUnspecified,paudio_callback,(void*)channels);
+	memset(&in, 0, sizeof(in));
+	in.device = input_device;
+	in.channelCount = channels;
+	in.sampleFormat = paFloat32;
+	in.suggestedLatency = di ? di->defaultLowInputLatency : 0.0;
+	in.hostApiSpecificStreamInfo = NULL;
+	err = Pa_OpenStream(&g_stream, &in, NULL, PA_SAMPLE_RATE,
+		paFramesPerBufferUnspecified, paNoFlag, paudio_callback, (void*)channels);
 	if(err!=paNoError)
 		goto error;
 
-	err = Pa_StartStream(stream);
+	err = Pa_StartStream(g_stream);
 	if(err!=paNoError)
 		goto error;
 
-	const PaStreamInfo *info = Pa_GetStreamInfo(stream);
+	g_active_input_device = input_device;
+	const PaStreamInfo *info = Pa_GetStreamInfo(g_stream);
 	*nominal_sample_rate = PA_SAMPLE_RATE;
 	*real_sample_rate = info->sampleRate;
 #ifdef DEBUG
 end:
 #endif
 	debug("sample rate: nominal = %d real = %f\n",*nominal_sample_rate,*real_sample_rate);
+	debug("audio input device: #%d %s\n", g_active_input_device, audio_get_device_display_name(g_active_input_device));
 
 	return 0;
 
 error:
+	if (g_stream) {
+		Pa_CloseStream(g_stream);
+		g_stream = NULL;
+	}
+	g_active_input_device = -1;
 	error("Error opening audio input: %s", Pa_GetErrorText(err));
 	return 1;
 }
@@ -113,6 +242,12 @@ error:
 int terminate_portaudio()
 {
 	debug("Closing portaudio\n");
+	if (g_stream) {
+		Pa_StopStream(g_stream);
+		Pa_CloseStream(g_stream);
+		g_stream = NULL;
+	}
+	g_active_input_device = -1;
 	PaError err = Pa_Terminate();
 	if(err != paNoError) {
 		error("Error closing audio: %s", Pa_GetErrorText(err));

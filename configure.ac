@@ -5,11 +5,13 @@ AC_INIT([MrWatchmaker], [tg_version], [vacaboja@gmail.com], [mrwatchmaker], [htt
 AM_INIT_AUTOMAKE([-Wall foreign subdir-objects])
 
 AC_PROG_CC
+AC_PROG_CXX
 AC_CHECK_LIB([pthread], [pthread_mutex_init], [], [AC_MSG_ERROR([pthread not found])])
 AC_CHECK_LIB([m], [sqrt], [], [AC_MSG_ERROR([libm not found])])
 PKG_CHECK_MODULES([GTK], [gtk+-3.0 glib-2.0])
 PKG_CHECK_MODULES([PORTAUDIO], [portaudio-2.0])
 PKG_CHECK_MODULES([FFTW], [fftw3f])
+PKG_CHECK_MODULES([OPENCV], [opencv4])
 
 AC_CHECK_TOOL([WINDRES], [windres])
 AM_CONDITIONAL([HAVE_WINDRES], [test x$WINDRES != x])

@@ -16,7 +16,7 @@
     51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 */
 
-#include "tg.h"
+#include "mrwatchmaker.h"
 #include <inttypes.h>
 
 #define LABEL_SIZE 64
@@ -506,7 +506,7 @@ error:
 int write_file(FILE *f, struct snapshot **s, char **names, uint64_t cnt)
 {
 	uint64_t i;
-	if(make_label(f, "tg-timer-version")) return 1;
+	if(make_label(f, "mrwatchmaker-version")) return 1;
 	if(serialize_string(f, VERSION)) return 1;
 	if(make_label(f, "data")) return 1;
 	if(serialize_struct_begin(f)) return 1;
@@ -523,7 +523,9 @@ int read_file(FILE *f, struct snapshot ***s, char ***names, uint64_t *cnt)
 	debug("serializer: reading file\n");
 	char lbl[LABEL_SIZE+1];
 	char *l = lbl;
-	if(scan_label(f, l) || strcmp("tg-timer-version",l)) return 1;
+	if(scan_label(f, l) ||
+	    (strcmp("mrwatchmaker-version", l) && strcmp("tg-timer-version", l)))
+		return 1;
 	if(scan_string(f, &l, LABEL_SIZE, NULL)) return 1;
 	debug("serializer: read version %s\n",l);
 	if(scan_label(f, l) || strcmp("data",l)) return 1;

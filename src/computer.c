@@ -16,7 +16,7 @@
     51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 */
 
-#include "tg.h"
+#include "mrwatchmaker.h"
 
 static int count_events(struct snapshot *s)
 {

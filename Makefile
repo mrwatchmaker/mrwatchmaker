@@ -15,7 +15,6 @@
 
 
 
-
 am__is_gnu_make = { \
   if test -z '$(MAKELEVEL)'; then \
     false; \
@@ -103,20 +102,20 @@ am__aclocal_m4_deps = $(top_srcdir)/m4/attributes.m4 \
 am__configure_deps = $(am__aclocal_m4_deps) $(CONFIGURE_DEPENDENCIES) \
 	$(ACLOCAL_M4)
 DIST_COMMON = $(srcdir)/Makefile.am $(top_srcdir)/configure \
-	$(am__configure_deps) $(dist_desktop_DATA) $(dist_mime_DATA) \
-	$(am__DIST_COMMON)
+	$(am__configure_deps) $(am__DIST_COMMON)
 am__CONFIG_DISTCLEAN_FILES = config.status config.cache config.log \
  configure.lineno config.status.lineno
 mkinstalldirs = $(install_sh) -d
 CONFIG_CLEAN_FILES =
 CONFIG_CLEAN_VPATH_FILES =
-am__installdirs = "$(DESTDIR)$(bindir)" "$(DESTDIR)$(man1dir)" \
-	"$(DESTDIR)$(desktopdir)" "$(DESTDIR)$(mimedir)"
+am__installdirs = "$(DESTDIR)$(bindir)"
 PROGRAMS = $(bin_PROGRAMS) $(noinst_PROGRAMS)
 am__mrwatchmaker_SOURCES_DIST = src/algo.c src/audio.c src/computer.c \
 	src/config.c src/interface.c src/output_panel.c \
 	src/serializer.c src/serial_motor.c src/serial_motor.h \
-	src/i18n.c src/i18n.h src/tg.h icons/tg-timer.rc
+	src/i18n.c src/i18n.h src/mrwatchmaker.h \
+	src/visual_baseline.cpp src/visual_baseline.h \
+	icons/tg-timer.rc
 am__dirstamp = $(am__leading_dot)dirstamp
 am__objects_1 =  \
 	icons/tg-timer.$(OBJEXT)
@@ -124,15 +123,18 @@ am_mrwatchmaker_OBJECTS = src/algo.$(OBJEXT) src/audio.$(OBJEXT) \
 	src/computer.$(OBJEXT) src/config.$(OBJEXT) \
 	src/interface.$(OBJEXT) src/output_panel.$(OBJEXT) \
 	src/serializer.$(OBJEXT) src/serial_motor.$(OBJEXT) \
-	src/i18n.$(OBJEXT) $(am__objects_1)
+	src/i18n.$(OBJEXT) src/visual_baseline.$(OBJEXT) \
+	$(am__objects_1)
 mrwatchmaker_OBJECTS = $(am_mrwatchmaker_OBJECTS)
 mrwatchmaker_LDADD = $(LDADD)
-mrwatchmaker_LINK = $(CCLD) $(AM_CFLAGS) $(CFLAGS) \
+mrwatchmaker_LINK = $(CXXLD) $(AM_CXXFLAGS) $(CXXFLAGS) \
 	$(mrwatchmaker_LDFLAGS) $(LDFLAGS) -o $@
 am__mrwatchmaker_dbg_SOURCES_DIST = src/algo.c src/audio.c \
 	src/computer.c src/config.c src/interface.c src/output_panel.c \
 	src/serializer.c src/serial_motor.c src/serial_motor.h \
-	src/i18n.c src/i18n.h src/tg.h icons/tg-timer.rc
+	src/i18n.c src/i18n.h src/mrwatchmaker.h \
+	src/visual_baseline.cpp src/visual_baseline.h \
+	icons/tg-timer.rc
 am__objects_2 = src/mrwatchmaker_dbg-algo.$(OBJEXT) \
 	src/mrwatchmaker_dbg-audio.$(OBJEXT) \
 	src/mrwatchmaker_dbg-computer.$(OBJEXT) \
@@ -141,16 +143,20 @@ am__objects_2 = src/mrwatchmaker_dbg-algo.$(OBJEXT) \
 	src/mrwatchmaker_dbg-output_panel.$(OBJEXT) \
 	src/mrwatchmaker_dbg-serializer.$(OBJEXT) \
 	src/mrwatchmaker_dbg-serial_motor.$(OBJEXT) \
-	src/mrwatchmaker_dbg-i18n.$(OBJEXT) $(am__objects_1)
+	src/mrwatchmaker_dbg-i18n.$(OBJEXT) \
+	src/mrwatchmaker_dbg-visual_baseline.$(OBJEXT) \
+	$(am__objects_1)
 am_mrwatchmaker_dbg_OBJECTS = $(am__objects_2)
 mrwatchmaker_dbg_OBJECTS = $(am_mrwatchmaker_dbg_OBJECTS)
 mrwatchmaker_dbg_LDADD = $(LDADD)
-mrwatchmaker_dbg_LINK = $(CCLD) $(mrwatchmaker_dbg_CFLAGS) $(CFLAGS) \
+mrwatchmaker_dbg_LINK = $(CXXLD) $(AM_CXXFLAGS) $(CXXFLAGS) \
 	$(mrwatchmaker_dbg_LDFLAGS) $(LDFLAGS) -o $@
 am__mrwatchmaker_prf_SOURCES_DIST = src/algo.c src/audio.c \
 	src/computer.c src/config.c src/interface.c src/output_panel.c \
 	src/serializer.c src/serial_motor.c src/serial_motor.h \
-	src/i18n.c src/i18n.h src/tg.h icons/tg-timer.rc
+	src/i18n.c src/i18n.h src/mrwatchmaker.h \
+	src/visual_baseline.cpp src/visual_baseline.h \
+	icons/tg-timer.rc
 am__objects_3 = src/mrwatchmaker_prf-algo.$(OBJEXT) \
 	src/mrwatchmaker_prf-audio.$(OBJEXT) \
 	src/mrwatchmaker_prf-computer.$(OBJEXT) \
@@ -159,16 +165,19 @@ am__objects_3 = src/mrwatchmaker_prf-algo.$(OBJEXT) \
 	src/mrwatchmaker_prf-output_panel.$(OBJEXT) \
 	src/mrwatchmaker_prf-serializer.$(OBJEXT) \
 	src/mrwatchmaker_prf-serial_motor.$(OBJEXT) \
-	src/mrwatchmaker_prf-i18n.$(OBJEXT) $(am__objects_1)
+	src/mrwatchmaker_prf-i18n.$(OBJEXT) \
+	src/visual_baseline.$(OBJEXT) $(am__objects_1)
 am_mrwatchmaker_prf_OBJECTS = $(am__objects_3)
 mrwatchmaker_prf_OBJECTS = $(am_mrwatchmaker_prf_OBJECTS)
 mrwatchmaker_prf_LDADD = $(LDADD)
-mrwatchmaker_prf_LINK = $(CCLD) $(mrwatchmaker_prf_CFLAGS) $(CFLAGS) \
+mrwatchmaker_prf_LINK = $(CXXLD) $(AM_CXXFLAGS) $(CXXFLAGS) \
 	$(mrwatchmaker_prf_LDFLAGS) $(LDFLAGS) -o $@
 am__mrwatchmaker_vlg_SOURCES_DIST = src/algo.c src/audio.c \
 	src/computer.c src/config.c src/interface.c src/output_panel.c \
 	src/serializer.c src/serial_motor.c src/serial_motor.h \
-	src/i18n.c src/i18n.h src/tg.h icons/tg-timer.rc
+	src/i18n.c src/i18n.h src/mrwatchmaker.h \
+	src/visual_baseline.cpp src/visual_baseline.h \
+	icons/tg-timer.rc
 am__objects_4 = src/mrwatchmaker_vlg-algo.$(OBJEXT) \
 	src/mrwatchmaker_vlg-audio.$(OBJEXT) \
 	src/mrwatchmaker_vlg-computer.$(OBJEXT) \
@@ -177,11 +186,12 @@ am__objects_4 = src/mrwatchmaker_vlg-algo.$(OBJEXT) \
 	src/mrwatchmaker_vlg-output_panel.$(OBJEXT) \
 	src/mrwatchmaker_vlg-serializer.$(OBJEXT) \
 	src/mrwatchmaker_vlg-serial_motor.$(OBJEXT) \
-	src/mrwatchmaker_vlg-i18n.$(OBJEXT) $(am__objects_1)
+	src/mrwatchmaker_vlg-i18n.$(OBJEXT) \
+	src/visual_baseline.$(OBJEXT) $(am__objects_1)
 am_mrwatchmaker_vlg_OBJECTS = $(am__objects_4)
 mrwatchmaker_vlg_OBJECTS = $(am_mrwatchmaker_vlg_OBJECTS)
 mrwatchmaker_vlg_LDADD = $(LDADD)
-mrwatchmaker_vlg_LINK = $(CCLD) $(mrwatchmaker_vlg_CFLAGS) $(CFLAGS) \
+mrwatchmaker_vlg_LINK = $(CXXLD) $(AM_CXXFLAGS) $(CXXFLAGS) \
 	$(mrwatchmaker_vlg_LDFLAGS) $(LDFLAGS) -o $@
 am_port_finder_OBJECTS = src/port_finder-port_finder.$(OBJEXT)
 port_finder_OBJECTS = $(am_port_finder_OBJECTS)
@@ -220,6 +230,19 @@ AM_V_CCLD = $(am__v_CCLD_$(V))
 am__v_CCLD_ = $(am__v_CCLD_$(AM_DEFAULT_VERBOSITY))
 am__v_CCLD_0 = @echo "  CCLD    " $@;
 am__v_CCLD_1 = 
+CXXCOMPILE = $(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) \
+	$(AM_CPPFLAGS) $(CPPFLAGS) $(AM_CXXFLAGS) $(CXXFLAGS)
+AM_V_CXX = $(am__v_CXX_$(V))
+am__v_CXX_ = $(am__v_CXX_$(AM_DEFAULT_VERBOSITY))
+am__v_CXX_0 = @echo "  CXX     " $@;
+am__v_CXX_1 = 
+CXXLD = $(CXX)
+CXXLINK = $(CXXLD) $(AM_CXXFLAGS) $(CXXFLAGS) $(AM_LDFLAGS) $(LDFLAGS) \
+	-o $@
+AM_V_CXXLD = $(am__v_CXXLD_$(V))
+am__v_CXXLD_ = $(am__v_CXXLD_$(AM_DEFAULT_VERBOSITY))
+am__v_CXXLD_0 = @echo "  CXXLD   " $@;
+am__v_CXXLD_1 = 
 SOURCES = $(mrwatchmaker_SOURCES) $(mrwatchmaker_dbg_SOURCES) \
 	$(mrwatchmaker_prf_SOURCES) $(mrwatchmaker_vlg_SOURCES) \
 	$(port_finder_SOURCES)
@@ -240,37 +263,6 @@ am__can_run_installinfo = \
     n|no|NO) false;; \
     *) (install-info --version) >/dev/null 2>&1;; \
   esac
-am__vpath_adj_setup = srcdirstrip=`echo "$(srcdir)" | sed 's|.|.|g'`;
-am__vpath_adj = case $$p in \
-    $(srcdir)/*) f=`echo "$$p" | sed "s|^$$srcdirstrip/||"`;; \
-    *) f=$$p;; \
-  esac;
-am__strip_dir = f=`echo $$p | sed -e 's|^.*/||'`;
-am__install_max = 40
-am__nobase_strip_setup = \
-  srcdirstrip=`echo "$(srcdir)" | sed 's/[].[^$$\\*|]/\\\\&/g'`
-am__nobase_strip = \
-  for p in $$list; do echo "$$p"; done | sed -e "s|$$srcdirstrip/||"
-am__nobase_list = $(am__nobase_strip_setup); \
-  for p in $$list; do echo "$$p $$p"; done | \
-  sed "s| $$srcdirstrip/| |;"' / .*\//!s/ .*/ ./; s,\( .*\)/[^/]*$$,\1,' | \
-  $(AWK) 'BEGIN { files["."] = "" } { files[$$2] = files[$$2] " " $$1; \
-    if (++n[$$2] == $(am__install_max)) \
-      { print $$2, files[$$2]; n[$$2] = 0; files[$$2] = "" } } \
-    END { for (dir in files) print dir, files[dir] }'
-am__base_list = \
-  sed '$$!N;$$!N;$$!N;$$!N;$$!N;$$!N;$$!N;s/\n/ /g' | \
-  sed '$$!N;$$!N;$$!N;$$!N;s/\n/ /g'
-am__uninstall_files_from_dir = { \
-  test -z "$$files" \
-    || { test ! -d "$$dir" && test ! -f "$$dir" && test ! -r "$$dir"; } \
-    || { echo " ( cd '$$dir' && rm -f" $$files ")"; \
-         $(am__cd) "$$dir" && rm -f $$files; }; \
-  }
-man1dir = $(mandir)/man1
-NROFF = nroff
-MANS = $(dist_man_MANS)
-DATA = $(dist_desktop_DATA) $(dist_mime_DATA)
 RECURSIVE_CLEAN_TARGETS = mostlyclean-recursive clean-recursive	\
   distclean-recursive maintainer-clean-recursive
 am__recursive_targets = \
@@ -300,8 +292,8 @@ ETAGS = etags
 CTAGS = ctags
 CSCOPE = cscope
 DIST_SUBDIRS = $(SUBDIRS)
-am__DIST_COMMON = $(dist_man_MANS) $(srcdir)/Makefile.in compile \
-	depcomp install-sh missing
+am__DIST_COMMON = $(srcdir)/Makefile.in compile depcomp install-sh \
+	missing
 DISTFILES = $(DIST_COMMON) $(DIST_SOURCES) $(TEXINFOS) $(EXTRA_DIST)
 distdir = $(PACKAGE)-$(VERSION)
 top_distdir = $(distdir)
@@ -344,18 +336,21 @@ distuninstallcheck_listfiles = find . -type f -print
 am__distuninstallcheck_listfiles = $(distuninstallcheck_listfiles) \
   | sed 's|^\./|$(prefix)/|' | grep -v '$(infodir)/dir$$'
 distcleancheck_listfiles = find . -type f -print
-ACLOCAL = ${SHELL} /c/Users/USER/Desktop/watch_time/mrwatchmaker/missing aclocal-1.15
+ACLOCAL = ${SHELL} /c/mrwatchmaker/missing aclocal-1.15
 AMTAR = $${TAR-tar}
 AM_DEFAULT_VERBOSITY = 1
 AM_LDFLAGS = -Wl,--as-needed
-AUTOCONF = ${SHELL} /c/Users/USER/Desktop/watch_time/mrwatchmaker/missing autoconf
-AUTOHEADER = ${SHELL} /c/Users/USER/Desktop/watch_time/mrwatchmaker/missing autoheader
-AUTOMAKE = ${SHELL} /c/Users/USER/Desktop/watch_time/mrwatchmaker/missing automake-1.15
+AUTOCONF = ${SHELL} /c/mrwatchmaker/missing autoconf
+AUTOHEADER = ${SHELL} /c/mrwatchmaker/missing autoheader
+AUTOMAKE = ${SHELL} /c/mrwatchmaker/missing automake-1.15
 AWK = gawk
 CC = gcc
 CCDEPMODE = depmode=gcc3
 CFLAGS = -g -O2 -Wall -Wextra
 CPPFLAGS = 
+CXX = g++
+CXXDEPMODE = depmode=gcc3
+CXXFLAGS = -g -O2
 CYGPATH_W = cygpath -w
 DEFS = -DPACKAGE_NAME=\"MrWatchmaker\" -DPACKAGE_TARNAME=\"mrwatchmaker\" -DPACKAGE_VERSION=\"1.0\" -DPACKAGE_STRING=\"MrWatchmaker\ 1.0\" -DPACKAGE_BUGREPORT=\"vacaboja@gmail.com\" -DPACKAGE_URL=\"https://github.com/vacaboja/tg\" -DPACKAGE=\"mrwatchmaker\" -DVERSION=\"1.0\" -DHAVE_LIBPTHREAD=1 -DHAVE_LIBM=1
 DEPDIR = .deps
@@ -363,10 +358,10 @@ ECHO_C =
 ECHO_N = -n
 ECHO_T = 
 EXEEXT = .exe
-FFTW_CFLAGS = -I/ucrt64/include
-FFTW_LIBS = -L/ucrt64/lib -lfftw3f
-GTK_CFLAGS = -I/ucrt64/include/gtk-3.0 -I/ucrt64/include/pango-1.0 -I/ucrt64/include -I/ucrt64/include/harfbuzz -I/ucrt64/include/cairo -I/ucrt64/include/freetype2 -I/ucrt64/include/pixman-1 -I/ucrt64/include/gdk-pixbuf-2.0 -I/ucrt64/include/libpng16 -I/ucrt64/include/webp -DLIBDEFLATE_DLL -I/ucrt64/include/atk-1.0 -I/ucrt64/include/fribidi -I/ucrt64/include/glib-2.0 -I/ucrt64/lib/glib-2.0/include
-GTK_LIBS = -L/ucrt64/lib -lgtk-3 -lgdk-3 -lz -lgdi32 -limm32 -lshell32 -lole32 -luuid -lwinmm -ldwmapi -lsetupapi -lcfgmgr32 -lhid -lwinspool -lcomctl32 -lcomdlg32 -lpangocairo-1.0 -lpangowin32-1.0 -lpango-1.0 -lcairo-gobject -lcairo -lharfbuzz -lgdk_pixbuf-2.0 -latk-1.0 -lgio-2.0 -lgobject-2.0 -lglib-2.0 -lintl
+FFTW_CFLAGS = -IC:/msys64/mingw64/include
+FFTW_LIBS = -LC:/msys64/mingw64/lib -lfftw3f
+GTK_CFLAGS = -IC:/msys64/mingw64/include/gtk-3.0 -IC:/msys64/mingw64/include/pango-1.0 -IC:/msys64/mingw64/include -IC:/msys64/mingw64/include/harfbuzz -IC:/msys64/mingw64/include/cairo -IC:/msys64/mingw64/include/freetype2 -IC:/msys64/mingw64/include/pixman-1 -IC:/msys64/mingw64/include/gdk-pixbuf-2.0 -IC:/msys64/mingw64/include/libpng16 -IC:/msys64/mingw64/include/webp -DLIBDEFLATE_DLL -IC:/msys64/mingw64/include/atk-1.0 -IC:/msys64/mingw64/include/fribidi -IC:/msys64/mingw64/include/glib-2.0 -IC:/msys64/mingw64/lib/glib-2.0/include
+GTK_LIBS = -LC:/msys64/mingw64/lib -lgtk-3 -lgdk-3 -lgdi32 -limm32 -lshell32 -lole32 -luuid -lwinmm -ldwmapi -lsetupapi -lcfgmgr32 -lhid -lwinspool -lcomctl32 -lcomdlg32 -lpangocairo-1.0 -lpangowin32-1.0 -lpango-1.0 -lcairo-gobject -lcairo -lharfbuzz -lgdk_pixbuf-2.0 -latk-1.0 -lgio-2.0 -lgobject-2.0 -lz -lglib-2.0 -lintl
 INSTALL = /usr/bin/install -c
 INSTALL_DATA = ${INSTALL} -m 644
 INSTALL_PROGRAM = ${INSTALL}
@@ -378,13 +373,19 @@ LIBS = $(GTK_LIBS) \
        $(GTHREAD_LIBS) \
        $(PORTAUDIO_LIBS) \
        $(FFTW_LIBS) \
+       $(OPENCV_LIBS) \
+       -lstrmiids \
+       -loleaut32 \
        -lpthread \
-       -lm
+       -lm \
+       -lstdc++
 
 LTLIBOBJS = 
-MAKEINFO = ${SHELL} /c/Users/USER/Desktop/watch_time/mrwatchmaker/missing makeinfo
+MAKEINFO = ${SHELL} /c/mrwatchmaker/missing makeinfo
 MKDIR_P = /usr/bin/mkdir -p
 OBJEXT = o
+OPENCV_CFLAGS = -IC:/msys64/mingw64/include/opencv4
+OPENCV_LIBS = -LC:/msys64/mingw64/lib -lopencv_gapi -lopencv_stitching -lopencv_alphamat -lopencv_aruco -lopencv_bgsegm -lopencv_ccalib -lopencv_cvv -lopencv_dnn_objdetect -lopencv_dnn_superres -lopencv_dpm -lopencv_face -lopencv_freetype -lopencv_fuzzy -lopencv_hdf -lopencv_hfs -lopencv_img_hash -lopencv_intensity_transform -lopencv_line_descriptor -lopencv_mcc -lopencv_ovis -lopencv_quality -lopencv_rapid -lopencv_reg -lopencv_rgbd -lopencv_saliency -lopencv_sfm -lopencv_signal -lopencv_stereo -lopencv_structured_light -lopencv_phase_unwrapping -lopencv_superres -lopencv_optflow -lopencv_surface_matching -lopencv_tracking -lopencv_highgui -lopencv_datasets -lopencv_text -lopencv_plot -lopencv_videostab -lopencv_videoio -lopencv_viz -lopencv_wechat_qrcode -lopencv_xfeatures2d -lopencv_shape -lopencv_ml -lopencv_ximgproc -lopencv_video -lopencv_xobjdetect -lopencv_objdetect -lopencv_calib3d -lopencv_imgcodecs -lopencv_features2d -lopencv_dnn -lopencv_flann -lopencv_xphoto -lopencv_photo -lopencv_imgproc -lopencv_core
 PACKAGE = mrwatchmaker
 PACKAGE_BUGREPORT = vacaboja@gmail.com
 PACKAGE_NAME = MrWatchmaker
@@ -393,21 +394,22 @@ PACKAGE_TARNAME = mrwatchmaker
 PACKAGE_URL = https://github.com/vacaboja/tg
 PACKAGE_VERSION = 1.0
 PATH_SEPARATOR = :
-PKG_CONFIG = /usr/bin/pkg-config
+PKG_CONFIG = /mingw64/bin/pkg-config
 PKG_CONFIG_LIBDIR = 
-PKG_CONFIG_PATH = /ucrt64/lib/pkgconfig:/ucrt64/share/pkgconfig
-PORTAUDIO_CFLAGS = -I/ucrt64/include
-PORTAUDIO_LIBS = -L/ucrt64/lib -lportaudio
+PKG_CONFIG_PATH = /mingw64/lib/pkgconfig:/mingw64/share/pkgconfig
+PORTAUDIO_CFLAGS = -IC:/msys64/mingw64/include
+PORTAUDIO_LIBS = -LC:/msys64/mingw64/lib -lportaudio
 SET_MAKE = 
 SHELL = /bin/sh
 STRIP = 
 VERSION = 1.0
 WINDRES = windres
-abs_builddir = /c/Users/USER/Desktop/watch_time/mrwatchmaker
-abs_srcdir = /c/Users/USER/Desktop/watch_time/mrwatchmaker
-abs_top_builddir = /c/Users/USER/Desktop/watch_time/mrwatchmaker
-abs_top_srcdir = /c/Users/USER/Desktop/watch_time/mrwatchmaker
+abs_builddir = /c/mrwatchmaker
+abs_srcdir = /c/mrwatchmaker
+abs_top_builddir = /c/mrwatchmaker
+abs_top_srcdir = /c/mrwatchmaker
 ac_ct_CC = gcc
+ac_ct_CXX = g++
 am__include = include
 am__leading_dot = .
 am__quote = 
@@ -425,7 +427,7 @@ host_alias =
 htmldir = ${docdir}
 includedir = ${prefix}/include
 infodir = ${datarootdir}/info
-install_sh = ${SHELL} /c/Users/USER/Desktop/watch_time/mrwatchmaker/install-sh
+install_sh = ${SHELL} /c/mrwatchmaker/install-sh
 libdir = ${exec_prefix}/lib
 libexecdir = ${exec_prefix}/libexec
 localedir = ${datarootdir}/locale
@@ -453,7 +455,8 @@ MOSTLYCLEANFILES = $(EXTRA_PROGRAMS)
 mrwatchmaker_SOURCES = src/algo.c src/audio.c src/computer.c \
 	src/config.c src/interface.c src/output_panel.c \
 	src/serializer.c src/serial_motor.c src/serial_motor.h \
-	src/i18n.c src/i18n.h src/tg.h $(am__append_1)
+	src/i18n.c src/i18n.h src/mrwatchmaker.h \
+	src/visual_baseline.cpp src/visual_baseline.h $(am__append_1)
 mrwatchmaker_dbg_SOURCES = $(mrwatchmaker_SOURCES)
 mrwatchmaker_prf_SOURCES = $(mrwatchmaker_SOURCES)
 mrwatchmaker_vlg_SOURCES = $(mrwatchmaker_SOURCES)
@@ -462,8 +465,10 @@ mrwatchmaker_dbg_CPPFLAGS = $(AM_CPPFLAGS) -DDEBUG
 AM_CFLAGS = $(GTK_CFLAGS) \
 	    $(GTHREAD_CFLAGS) \
 	    $(PORTAUDIO_CFLAGS) \
-	    $(FFTW_CFLAGS)
+	    $(FFTW_CFLAGS) \
+	    $(OPENCV_CFLAGS)
 
+AM_CXXFLAGS = $(AM_CFLAGS)
 mrwatchmaker_dbg_CFLAGS = $(AM_CFLAGS) -ggdb
 mrwatchmaker_prf_CFLAGS = $(AM_CFLAGS) -pg
 mrwatchmaker_vlg_CFLAGS = $(AM_CFLAGS) -g
@@ -472,11 +477,6 @@ mrwatchmaker_dbg_LDFLAGS = $(AM_LDFLAGS) $(am__append_3)
 mrwatchmaker_prf_LDFLAGS = $(AM_LDFLAGS) $(am__append_4)
 mrwatchmaker_vlg_LDFLAGS = $(AM_LDFLAGS) $(am__append_5)
 port_finder_LDFLAGS = -mconsole
-desktopdir = $(datadir)/applications
-dist_desktop_DATA = icons/tg-timer.desktop
-mimedir = $(datadir)/mime/packages
-dist_mime_DATA = icons/tg-timer.xml
-dist_man_MANS = docs/tg-timer.1
 EXTRA_DIST = autogen.sh \
 	     icons \
 	     packaging \
@@ -484,13 +484,10 @@ EXTRA_DIST = autogen.sh \
 	     README.md \
 	     reference_9oclock.png
 
-
-# 회사 가져갈 폴더: mrwatchmaker.exe + README 등
-OFFICE_DIR = 회사가져갈_MrWatchmaker
 all: all-recursive
 
 .SUFFIXES:
-.SUFFIXES: .c .o .obj .rc
+.SUFFIXES: .c .cpp .o .obj .rc
 am--refresh: Makefile
 	@:
 $(srcdir)/Makefile.in:  $(srcdir)/Makefile.am  $(am__configure_deps)
@@ -590,6 +587,8 @@ src/serializer.$(OBJEXT): src/$(am__dirstamp) \
 src/serial_motor.$(OBJEXT): src/$(am__dirstamp) \
 	src/$(DEPDIR)/$(am__dirstamp)
 src/i18n.$(OBJEXT): src/$(am__dirstamp) src/$(DEPDIR)/$(am__dirstamp)
+src/visual_baseline.$(OBJEXT): src/$(am__dirstamp) \
+	src/$(DEPDIR)/$(am__dirstamp)
 icons/$(am__dirstamp):
 	@$(MKDIR_P) icons
 	@: > icons/$(am__dirstamp)
@@ -601,7 +600,7 @@ icons/tg-timer.$(OBJEXT): icons/$(am__dirstamp) \
 
 mrwatchmaker$(EXEEXT): $(mrwatchmaker_OBJECTS) $(mrwatchmaker_DEPENDENCIES) $(EXTRA_mrwatchmaker_DEPENDENCIES) 
 	@rm -f mrwatchmaker$(EXEEXT)
-	$(AM_V_CCLD)$(mrwatchmaker_LINK) $(mrwatchmaker_OBJECTS) $(mrwatchmaker_LDADD) $(LIBS)
+	$(AM_V_CXXLD)$(mrwatchmaker_LINK) $(mrwatchmaker_OBJECTS) $(mrwatchmaker_LDADD) $(LIBS)
 src/mrwatchmaker_dbg-algo.$(OBJEXT): src/$(am__dirstamp) \
 	src/$(DEPDIR)/$(am__dirstamp)
 src/mrwatchmaker_dbg-audio.$(OBJEXT): src/$(am__dirstamp) \
@@ -620,10 +619,12 @@ src/mrwatchmaker_dbg-serial_motor.$(OBJEXT): src/$(am__dirstamp) \
 	src/$(DEPDIR)/$(am__dirstamp)
 src/mrwatchmaker_dbg-i18n.$(OBJEXT): src/$(am__dirstamp) \
 	src/$(DEPDIR)/$(am__dirstamp)
+src/mrwatchmaker_dbg-visual_baseline.$(OBJEXT): src/$(am__dirstamp) \
+	src/$(DEPDIR)/$(am__dirstamp)
 
 mrwatchmaker-dbg$(EXEEXT): $(mrwatchmaker_dbg_OBJECTS) $(mrwatchmaker_dbg_DEPENDENCIES) $(EXTRA_mrwatchmaker_dbg_DEPENDENCIES) 
 	@rm -f mrwatchmaker-dbg$(EXEEXT)
-	$(AM_V_CCLD)$(mrwatchmaker_dbg_LINK) $(mrwatchmaker_dbg_OBJECTS) $(mrwatchmaker_dbg_LDADD) $(LIBS)
+	$(AM_V_CXXLD)$(mrwatchmaker_dbg_LINK) $(mrwatchmaker_dbg_OBJECTS) $(mrwatchmaker_dbg_LDADD) $(LIBS)
 src/mrwatchmaker_prf-algo.$(OBJEXT): src/$(am__dirstamp) \
 	src/$(DEPDIR)/$(am__dirstamp)
 src/mrwatchmaker_prf-audio.$(OBJEXT): src/$(am__dirstamp) \
@@ -645,7 +646,7 @@ src/mrwatchmaker_prf-i18n.$(OBJEXT): src/$(am__dirstamp) \
 
 mrwatchmaker-prf$(EXEEXT): $(mrwatchmaker_prf_OBJECTS) $(mrwatchmaker_prf_DEPENDENCIES) $(EXTRA_mrwatchmaker_prf_DEPENDENCIES) 
 	@rm -f mrwatchmaker-prf$(EXEEXT)
-	$(AM_V_CCLD)$(mrwatchmaker_prf_LINK) $(mrwatchmaker_prf_OBJECTS) $(mrwatchmaker_prf_LDADD) $(LIBS)
+	$(AM_V_CXXLD)$(mrwatchmaker_prf_LINK) $(mrwatchmaker_prf_OBJECTS) $(mrwatchmaker_prf_LDADD) $(LIBS)
 src/mrwatchmaker_vlg-algo.$(OBJEXT): src/$(am__dirstamp) \
 	src/$(DEPDIR)/$(am__dirstamp)
 src/mrwatchmaker_vlg-audio.$(OBJEXT): src/$(am__dirstamp) \
@@ -667,7 +668,7 @@ src/mrwatchmaker_vlg-i18n.$(OBJEXT): src/$(am__dirstamp) \
 
 mrwatchmaker-vlg$(EXEEXT): $(mrwatchmaker_vlg_OBJECTS) $(mrwatchmaker_vlg_DEPENDENCIES) $(EXTRA_mrwatchmaker_vlg_DEPENDENCIES) 
 	@rm -f mrwatchmaker-vlg$(EXEEXT)
-	$(AM_V_CCLD)$(mrwatchmaker_vlg_LINK) $(mrwatchmaker_vlg_OBJECTS) $(mrwatchmaker_vlg_LDADD) $(LIBS)
+	$(AM_V_CXXLD)$(mrwatchmaker_vlg_LINK) $(mrwatchmaker_vlg_OBJECTS) $(mrwatchmaker_vlg_LDADD) $(LIBS)
 src/port_finder-port_finder.$(OBJEXT): src/$(am__dirstamp) \
 	src/$(DEPDIR)/$(am__dirstamp)
 
@@ -698,6 +699,7 @@ include src/$(DEPDIR)/mrwatchmaker_dbg-interface.Po
 include src/$(DEPDIR)/mrwatchmaker_dbg-output_panel.Po
 include src/$(DEPDIR)/mrwatchmaker_dbg-serial_motor.Po
 include src/$(DEPDIR)/mrwatchmaker_dbg-serializer.Po
+include src/$(DEPDIR)/mrwatchmaker_dbg-visual_baseline.Po
 include src/$(DEPDIR)/mrwatchmaker_prf-algo.Po
 include src/$(DEPDIR)/mrwatchmaker_prf-audio.Po
 include src/$(DEPDIR)/mrwatchmaker_prf-computer.Po
@@ -720,6 +722,7 @@ include src/$(DEPDIR)/output_panel.Po
 include src/$(DEPDIR)/port_finder-port_finder.Po
 include src/$(DEPDIR)/serial_motor.Po
 include src/$(DEPDIR)/serializer.Po
+include src/$(DEPDIR)/visual_baseline.Po
 
 .c.o:
 	$(AM_V_CC)depbase=`echo $@ | sed 's|[^/]*$$|$(DEPDIR)/&|;s|\.o$$||'`;\
@@ -1128,91 +1131,36 @@ src/port_finder-port_finder.obj: src/port_finder.c
 #	$(AM_V_CC)source='src/port_finder.c' object='src/port_finder-port_finder.obj' libtool=no \
 #	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) \
 #	$(AM_V_CC_no)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(port_finder_CFLAGS) $(CFLAGS) -c -o src/port_finder-port_finder.obj `if test -f 'src/port_finder.c'; then $(CYGPATH_W) 'src/port_finder.c'; else $(CYGPATH_W) '$(srcdir)/src/port_finder.c'; fi`
-install-man1: $(dist_man_MANS)
-	@$(NORMAL_INSTALL)
-	@list1=''; \
-	list2='$(dist_man_MANS)'; \
-	test -n "$(man1dir)" \
-	  && test -n "`echo $$list1$$list2`" \
-	  || exit 0; \
-	echo " $(MKDIR_P) '$(DESTDIR)$(man1dir)'"; \
-	$(MKDIR_P) "$(DESTDIR)$(man1dir)" || exit 1; \
-	{ for i in $$list1; do echo "$$i"; done;  \
-	if test -n "$$list2"; then \
-	  for i in $$list2; do echo "$$i"; done \
-	    | sed -n '/\.1[a-z]*$$/p'; \
-	fi; \
-	} | while read p; do \
-	  if test -f $$p; then d=; else d="$(srcdir)/"; fi; \
-	  echo "$$d$$p"; echo "$$p"; \
-	done | \
-	sed -e 'n;s,.*/,,;p;h;s,.*\.,,;s,^[^1][0-9a-z]*$$,1,;x' \
-	      -e 's,\.[0-9a-z]*$$,,;$(transform);G;s,\n,.,' | \
-	sed 'N;N;s,\n, ,g' | { \
-	list=; while read file base inst; do \
-	  if test "$$base" = "$$inst"; then list="$$list $$file"; else \
-	    echo " $(INSTALL_DATA) '$$file' '$(DESTDIR)$(man1dir)/$$inst'"; \
-	    $(INSTALL_DATA) "$$file" "$(DESTDIR)$(man1dir)/$$inst" || exit $$?; \
-	  fi; \
-	done; \
-	for i in $$list; do echo "$$i"; done | $(am__base_list) | \
-	while read files; do \
-	  test -z "$$files" || { \
-	    echo " $(INSTALL_DATA) $$files '$(DESTDIR)$(man1dir)'"; \
-	    $(INSTALL_DATA) $$files "$(DESTDIR)$(man1dir)" || exit $$?; }; \
-	done; }
 
-uninstall-man1:
-	@$(NORMAL_UNINSTALL)
-	@list=''; test -n "$(man1dir)" || exit 0; \
-	files=`{ for i in $$list; do echo "$$i"; done; \
-	l2='$(dist_man_MANS)'; for i in $$l2; do echo "$$i"; done | \
-	  sed -n '/\.1[a-z]*$$/p'; \
-	} | sed -e 's,.*/,,;h;s,.*\.,,;s,^[^1][0-9a-z]*$$,1,;x' \
-	      -e 's,\.[0-9a-z]*$$,,;$(transform);G;s,\n,.,'`; \
-	dir='$(DESTDIR)$(man1dir)'; $(am__uninstall_files_from_dir)
-install-dist_desktopDATA: $(dist_desktop_DATA)
-	@$(NORMAL_INSTALL)
-	@list='$(dist_desktop_DATA)'; test -n "$(desktopdir)" || list=; \
-	if test -n "$$list"; then \
-	  echo " $(MKDIR_P) '$(DESTDIR)$(desktopdir)'"; \
-	  $(MKDIR_P) "$(DESTDIR)$(desktopdir)" || exit 1; \
-	fi; \
-	for p in $$list; do \
-	  if test -f "$$p"; then d=; else d="$(srcdir)/"; fi; \
-	  echo "$$d$$p"; \
-	done | $(am__base_list) | \
-	while read files; do \
-	  echo " $(INSTALL_DATA) $$files '$(DESTDIR)$(desktopdir)'"; \
-	  $(INSTALL_DATA) $$files "$(DESTDIR)$(desktopdir)" || exit $$?; \
-	done
+.cpp.o:
+	$(AM_V_CXX)depbase=`echo $@ | sed 's|[^/]*$$|$(DEPDIR)/&|;s|\.o$$||'`;\
+	$(CXXCOMPILE) -MT $@ -MD -MP -MF $$depbase.Tpo -c -o $@ $< &&\
+	$(am__mv) $$depbase.Tpo $$depbase.Po
+#	$(AM_V_CXX)source='$<' object='$@' libtool=no \
+#	DEPDIR=$(DEPDIR) $(CXXDEPMODE) $(depcomp) \
+#	$(AM_V_CXX_no)$(CXXCOMPILE) -c -o $@ $<
 
-uninstall-dist_desktopDATA:
-	@$(NORMAL_UNINSTALL)
-	@list='$(dist_desktop_DATA)'; test -n "$(desktopdir)" || list=; \
-	files=`for p in $$list; do echo $$p; done | sed -e 's|^.*/||'`; \
-	dir='$(DESTDIR)$(desktopdir)'; $(am__uninstall_files_from_dir)
-install-dist_mimeDATA: $(dist_mime_DATA)
-	@$(NORMAL_INSTALL)
-	@list='$(dist_mime_DATA)'; test -n "$(mimedir)" || list=; \
-	if test -n "$$list"; then \
-	  echo " $(MKDIR_P) '$(DESTDIR)$(mimedir)'"; \
-	  $(MKDIR_P) "$(DESTDIR)$(mimedir)" || exit 1; \
-	fi; \
-	for p in $$list; do \
-	  if test -f "$$p"; then d=; else d="$(srcdir)/"; fi; \
-	  echo "$$d$$p"; \
-	done | $(am__base_list) | \
-	while read files; do \
-	  echo " $(INSTALL_DATA) $$files '$(DESTDIR)$(mimedir)'"; \
-	  $(INSTALL_DATA) $$files "$(DESTDIR)$(mimedir)" || exit $$?; \
-	done
+.cpp.obj:
+	$(AM_V_CXX)depbase=`echo $@ | sed 's|[^/]*$$|$(DEPDIR)/&|;s|\.obj$$||'`;\
+	$(CXXCOMPILE) -MT $@ -MD -MP -MF $$depbase.Tpo -c -o $@ `$(CYGPATH_W) '$<'` &&\
+	$(am__mv) $$depbase.Tpo $$depbase.Po
+#	$(AM_V_CXX)source='$<' object='$@' libtool=no \
+#	DEPDIR=$(DEPDIR) $(CXXDEPMODE) $(depcomp) \
+#	$(AM_V_CXX_no)$(CXXCOMPILE) -c -o $@ `$(CYGPATH_W) '$<'`
 
-uninstall-dist_mimeDATA:
-	@$(NORMAL_UNINSTALL)
-	@list='$(dist_mime_DATA)'; test -n "$(mimedir)" || list=; \
-	files=`for p in $$list; do echo $$p; done | sed -e 's|^.*/||'`; \
-	dir='$(DESTDIR)$(mimedir)'; $(am__uninstall_files_from_dir)
+src/mrwatchmaker_dbg-visual_baseline.o: src/visual_baseline.cpp
+	$(AM_V_CXX)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(mrwatchmaker_dbg_CPPFLAGS) $(CPPFLAGS) $(AM_CXXFLAGS) $(CXXFLAGS) -MT src/mrwatchmaker_dbg-visual_baseline.o -MD -MP -MF src/$(DEPDIR)/mrwatchmaker_dbg-visual_baseline.Tpo -c -o src/mrwatchmaker_dbg-visual_baseline.o `test -f 'src/visual_baseline.cpp' || echo '$(srcdir)/'`src/visual_baseline.cpp
+	$(AM_V_at)$(am__mv) src/$(DEPDIR)/mrwatchmaker_dbg-visual_baseline.Tpo src/$(DEPDIR)/mrwatchmaker_dbg-visual_baseline.Po
+#	$(AM_V_CXX)source='src/visual_baseline.cpp' object='src/mrwatchmaker_dbg-visual_baseline.o' libtool=no \
+#	DEPDIR=$(DEPDIR) $(CXXDEPMODE) $(depcomp) \
+#	$(AM_V_CXX_no)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(mrwatchmaker_dbg_CPPFLAGS) $(CPPFLAGS) $(AM_CXXFLAGS) $(CXXFLAGS) -c -o src/mrwatchmaker_dbg-visual_baseline.o `test -f 'src/visual_baseline.cpp' || echo '$(srcdir)/'`src/visual_baseline.cpp
+
+src/mrwatchmaker_dbg-visual_baseline.obj: src/visual_baseline.cpp
+	$(AM_V_CXX)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(mrwatchmaker_dbg_CPPFLAGS) $(CPPFLAGS) $(AM_CXXFLAGS) $(CXXFLAGS) -MT src/mrwatchmaker_dbg-visual_baseline.obj -MD -MP -MF src/$(DEPDIR)/mrwatchmaker_dbg-visual_baseline.Tpo -c -o src/mrwatchmaker_dbg-visual_baseline.obj `if test -f 'src/visual_baseline.cpp'; then $(CYGPATH_W) 'src/visual_baseline.cpp'; else $(CYGPATH_W) '$(srcdir)/src/visual_baseline.cpp'; fi`
+	$(AM_V_at)$(am__mv) src/$(DEPDIR)/mrwatchmaker_dbg-visual_baseline.Tpo src/$(DEPDIR)/mrwatchmaker_dbg-visual_baseline.Po
+#	$(AM_V_CXX)source='src/visual_baseline.cpp' object='src/mrwatchmaker_dbg-visual_baseline.obj' libtool=no \
+#	DEPDIR=$(DEPDIR) $(CXXDEPMODE) $(depcomp) \
+#	$(AM_V_CXX_no)$(CXX) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(mrwatchmaker_dbg_CPPFLAGS) $(CPPFLAGS) $(AM_CXXFLAGS) $(CXXFLAGS) -c -o src/mrwatchmaker_dbg-visual_baseline.obj `if test -f 'src/visual_baseline.cpp'; then $(CYGPATH_W) 'src/visual_baseline.cpp'; else $(CYGPATH_W) '$(srcdir)/src/visual_baseline.cpp'; fi`
 
 # This directory's subdirectories are mostly independent; you can cd
 # into them and run 'make' without going through this Makefile.
@@ -1510,10 +1458,10 @@ distcleancheck: distclean
 	       exit 1; } >&2
 check-am: all-am
 check: check-recursive
-all-am: Makefile $(PROGRAMS) $(MANS) $(DATA)
+all-am: Makefile $(PROGRAMS)
 installdirs: installdirs-recursive
 installdirs-am:
-	for dir in "$(DESTDIR)$(bindir)" "$(DESTDIR)$(man1dir)" "$(DESTDIR)$(desktopdir)" "$(DESTDIR)$(mimedir)"; do \
+	for dir in "$(DESTDIR)$(bindir)"; do \
 	  test -z "$$dir" || $(MKDIR_P) "$$dir"; \
 	done
 install: install-recursive
@@ -1575,8 +1523,7 @@ info: info-recursive
 
 info-am:
 
-install-data-am: install-dist_desktopDATA install-dist_mimeDATA \
-	install-man
+install-data-am:
 
 install-dvi: install-dvi-recursive
 
@@ -1592,7 +1539,7 @@ install-info: install-info-recursive
 
 install-info-am:
 
-install-man: install-man1
+install-man:
 
 install-pdf: install-pdf-recursive
 
@@ -1623,10 +1570,7 @@ ps: ps-recursive
 
 ps-am:
 
-uninstall-am: uninstall-binPROGRAMS uninstall-dist_desktopDATA \
-	uninstall-dist_mimeDATA uninstall-man
-
-uninstall-man: uninstall-man1
+uninstall-am: uninstall-binPROGRAMS
 
 .MAKE: $(am__recursive_targets) install-am install-strip
 
@@ -1638,17 +1582,15 @@ uninstall-man: uninstall-man1
 	distcheck distclean distclean-compile distclean-generic \
 	distclean-tags distcleancheck distdir distuninstallcheck dvi \
 	dvi-am html html-am info info-am install install-am \
-	install-binPROGRAMS install-data install-data-am \
-	install-dist_desktopDATA install-dist_mimeDATA install-dvi \
+	install-binPROGRAMS install-data install-data-am install-dvi \
 	install-dvi-am install-exec install-exec-am install-html \
 	install-html-am install-info install-info-am install-man \
-	install-man1 install-pdf install-pdf-am install-ps \
-	install-ps-am install-strip installcheck installcheck-am \
-	installdirs installdirs-am maintainer-clean \
-	maintainer-clean-generic mostlyclean mostlyclean-compile \
-	mostlyclean-generic pdf pdf-am ps ps-am tags tags-am uninstall \
-	uninstall-am uninstall-binPROGRAMS uninstall-dist_desktopDATA \
-	uninstall-dist_mimeDATA uninstall-man uninstall-man1
+	install-pdf install-pdf-am install-ps install-ps-am \
+	install-strip installcheck installcheck-am installdirs \
+	installdirs-am maintainer-clean maintainer-clean-generic \
+	mostlyclean mostlyclean-compile mostlyclean-generic pdf pdf-am \
+	ps ps-am tags tags-am uninstall uninstall-am \
+	uninstall-binPROGRAMS
 
 .PRECIOUS: Makefile
 
@@ -1663,18 +1605,11 @@ test: mrwatchmaker-dbg
 valgrind: mrwatchmaker-vlg
 	valgrind --leak-check=full -v --num-callers=99 --suppressions=.valgrind.supp ./$^
 .PHONY: valgrind
-office: all
-	@rm -rf $(OFFICE_DIR) && mkdir -p $(OFFICE_DIR)
-	@cp -f mrwatchmaker$(EXEEXT) $(OFFICE_DIR)/mrwatchmaker$(EXEEXT) 2>/dev/null || true
-	@cp -f reference_9oclock.png $(OFFICE_DIR)/ 2>/dev/null || true
-	@cp -f README.md $(OFFICE_DIR)/ 2>/dev/null || cp -f ../README.md $(OFFICE_DIR)/ 2>/dev/null || true
-	@cp -f LICENSE $(OFFICE_DIR)/ 2>/dev/null || cp -f ../LICENSE $(OFFICE_DIR)/ 2>/dev/null || true
-	@test -f port.conf && cp -f port.conf $(OFFICE_DIR)/ || echo "5" > $(OFFICE_DIR)/port.conf
-	@echo "MrWatchmaker 회사용 폴더" > $(OFFICE_DIR)/README_회사용.txt
-	@echo "1. mrwatchmaker.exe 실행" >> $(OFFICE_DIR)/README_회사용.txt
-	@echo "2. port.conf 에 COM 번호만 적기 (예: 5 = COM5)" >> $(OFFICE_DIR)/README_회사용.txt
-	@echo "완료: $(OFFICE_DIR)/"
-.PHONY: office
+
+# 빌드 후 exe 옆에 런타임 DLL 복사 (c:/mrwatchmaker)
+copy-dlls: all
+	@bash packaging/copy_dlls_mingw.sh "$(CURDIR)"
+.PHONY: copy-dlls
 
 # Tell versions [3.59,3.63) of GNU make to not export all variables.
 # Otherwise a system limit (for SysV at least) may be exceeded.

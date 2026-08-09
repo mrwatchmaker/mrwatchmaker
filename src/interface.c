@@ -16,7 +16,7 @@
     51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 */
 
-#include "tg.h"
+#include "mrwatchmaker.h"
 #include "i18n.h"
 #include "serial_motor.h"
 #include <sys/types.h>
@@ -314,6 +314,21 @@ static void handle_calibrate(GtkCheckMenuItem *b, struct main_window *w)
 		w->calibrate = button_state;
 		recompute(w);
 	}
+}
+
+static void handle_mic_select(GtkMenuItem *m, struct main_window *w)
+{
+	int dev = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(m), "mic_device"));
+	if (dev == w->mic_input_device)
+		return;
+	w->mic_input_device = dev;
+	audio_set_preferred_input_device(dev);
+	save_on_change(w);
+	GtkWidget *dialog = gtk_message_dialog_new(GTK_WINDOW(w->window),
+		GTK_DIALOG_MODAL, GTK_MESSAGE_INFO, GTK_BUTTONS_OK,
+		"%s", _("마이크 장치 변경은 재시작 후 적용됩니다."));
+	gtk_dialog_run(GTK_DIALOG(dialog));
+	gtk_widget_destroy(dialog);
 }
 
 static void handle_light(GtkCheckMenuItem *b, struct main_window *w)
@@ -1057,6 +1072,49 @@ static void init_main_window(struct main_window *w)
 	gtk_menu_shell_append(GTK_MENU_SHELL(command_menu), w->cal_button);
 	g_signal_connect(w->cal_button, "toggled", G_CALLBACK(handle_calibrate), w);
 
+	// ... Microphone input selector
+	{
+		GtkWidget *mic_item = gtk_menu_item_new_with_label(_("마이크 선택"));
+		GtkWidget *mic_submenu = gtk_menu_new();
+		GSList *mic_group = NULL;
+		gtk_menu_item_set_submenu(GTK_MENU_ITEM(mic_item), mic_submenu);
+
+		GtkWidget *auto_item = gtk_radio_menu_item_new_with_label(mic_group, _("자동 (USB 우선)"));
+		mic_group = gtk_radio_menu_item_get_group(GTK_RADIO_MENU_ITEM(auto_item));
+		g_object_set_data(G_OBJECT(auto_item), "mic_device", GINT_TO_POINTER(-1));
+		g_signal_connect(auto_item, "activate", G_CALLBACK(handle_mic_select), w);
+		if (w->mic_input_device < 0)
+			gtk_check_menu_item_set_active(GTK_CHECK_MENU_ITEM(auto_item), TRUE);
+		gtk_menu_shell_append(GTK_MENU_SHELL(mic_submenu), auto_item);
+
+		int cnt = audio_get_input_device_count();
+		for (int i = 0; i < cnt; i++) {
+			int dev = audio_get_nth_input_device_index(i);
+			char label[256];
+			snprintf(label, sizeof(label), "%s%s",
+				audio_device_looks_usb(dev) ? "[USB] " : "",
+				audio_get_device_display_name(dev));
+			GtkWidget *mi = gtk_radio_menu_item_new_with_label(mic_group, label);
+			mic_group = gtk_radio_menu_item_get_group(GTK_RADIO_MENU_ITEM(mi));
+			g_object_set_data(G_OBJECT(mi), "mic_device", GINT_TO_POINTER(dev));
+			g_signal_connect(mi, "activate", G_CALLBACK(handle_mic_select), w);
+			if (w->mic_input_device == dev)
+				gtk_check_menu_item_set_active(GTK_CHECK_MENU_ITEM(mi), TRUE);
+			gtk_menu_shell_append(GTK_MENU_SHELL(mic_submenu), mi);
+		}
+		gtk_menu_shell_append(GTK_MENU_SHELL(command_menu), mic_item);
+	}
+
+	/* USB 카메라 선택 (장치경로/이름 우선, 인덱스 0 포함) */
+	{
+		GtkWidget *cam_item = gtk_menu_item_new_with_label(_("카메라 선택 (USB 우선)"));
+		GtkWidget *cam_submenu = gtk_menu_new();
+		gtk_menu_item_set_submenu(GTK_MENU_ITEM(cam_item), cam_submenu);
+		if (w->active_panel)
+			output_panel_append_camera_menu(cam_submenu, w->active_panel);
+		gtk_menu_shell_append(GTK_MENU_SHELL(command_menu), cam_item);
+	}
+
 	gtk_menu_shell_append(GTK_MENU_SHELL(command_menu), gtk_separator_menu_item_new());
 
 	// ... Close all
@@ -1166,13 +1224,7 @@ static void start_interface(GApplication* app, void *p)
 	struct main_window *w = malloc(sizeof(struct main_window));
 	install_exit_safety_handlers();
 
-	if(start_portaudio(&w->nominal_sr, &real_sr)) {
-		g_application_quit(app);
-		return;
-	}
-
 	w->app = GTK_APPLICATION(app);
-
 	w->zombie = 0;
 	w->controls_active = 1;
 	w->cal = MIN_CAL - 1;
@@ -1183,8 +1235,14 @@ static void start_interface(GApplication* app, void *p)
 	w->lang = -1;
 	w->visual_delta_face = 0;
 	w->visual_delta_arm = 0;
+	w->mic_input_device = -1;
 
 	load_config(w);
+	audio_set_preferred_input_device(w->mic_input_device);
+	if(start_portaudio(&w->nominal_sr, &real_sr)) {
+		g_application_quit(app);
+		return;
+	}
 	i18n_init(w->lang);
 
 	if(w->la < MIN_LA || w->la > MAX_LA) w->la = DEFAULT_LA;

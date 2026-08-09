@@ -16,7 +16,7 @@
     51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 */
 
-#include "tg.h"
+#include "mrwatchmaker.h"
 
 #if !GLIB_CHECK_VERSION(2,40,0)
 static gboolean
@@ -45,10 +45,33 @@ g_key_file_save_to_file (GKeyFile     *key_file,
 #define g_key_file_get_int g_key_file_get_integer
 #define g_key_file_set_int g_key_file_set_integer // the devil may take glib
 
+static gchar *config_file_path_alloc(void)
+{
+	gchar *path = g_build_filename(g_get_user_config_dir(), CONFIG_FILE_NAME, NULL);
+	if (g_file_test(path, G_FILE_TEST_EXISTS))
+		return path;
+	gchar *legacy = g_build_filename(g_get_user_config_dir(), CONFIG_FILE_LEGACY, NULL);
+	if (g_file_test(legacy, G_FILE_TEST_EXISTS)) {
+		g_free(path);
+		return legacy;
+	}
+	g_free(legacy);
+	return path;
+}
+
+static const gchar *config_ini_group_for_key(GKeyFile *kf, const gchar *key)
+{
+	if (g_key_file_has_key(kf, CONFIG_INI_GROUP, key, NULL))
+		return CONFIG_INI_GROUP;
+	if (g_key_file_has_key(kf, CONFIG_INI_LEGACY_GROUP, key, NULL))
+		return CONFIG_INI_LEGACY_GROUP;
+	return CONFIG_INI_GROUP;
+}
+
 void load_config(struct main_window *w)
 {
 	w->config_file = g_key_file_new();
-	w->config_file_name = g_build_filename(g_get_user_config_dir(), CONFIG_FILE_NAME, NULL);
+	w->config_file_name = config_file_path_alloc();
 	w->conf_data = malloc(sizeof(struct conf_data));
 #define SETUP(NAME,PLACE,TYPE) \
 	w -> conf_data -> PLACE = w -> PLACE;
@@ -64,7 +87,8 @@ void load_config(struct main_window *w)
 #define LOAD(NAME,PLACE,TYPE) \
 	{ \
 		GError *e = NULL; \
-		TYPE val = g_key_file_get_ ## TYPE (w->config_file, "tg", #NAME, &e); \
+		const gchar *grp = config_ini_group_for_key(w->config_file, #NAME); \
+		TYPE val = g_key_file_get_ ## TYPE (w->config_file, grp, #NAME, &e); \
 		if(e) { \
 			debug("Config: error loading field " #NAME "\n"); \
 			g_error_free(e); \
@@ -79,12 +103,20 @@ void load_config(struct main_window *w)
 
 void save_config(struct main_window *w)
 {
+	gchar *canonical = g_build_filename(g_get_user_config_dir(), CONFIG_FILE_NAME, NULL);
+	if (strcmp(canonical, w->config_file_name) != 0) {
+		g_free(w->config_file_name);
+		w->config_file_name = canonical;
+	} else {
+		g_free(canonical);
+	}
+
 	debug("Config: saving configuration file\n");
 
-	g_key_file_set_string(w->config_file, "tg", "version", VERSION);
+	g_key_file_set_string(w->config_file, CONFIG_INI_GROUP, "version", VERSION);
 
 #define SAVE(NAME,PLACE,TYPE) \
-	g_key_file_set_ ## TYPE (w->config_file, "tg", #NAME, w -> PLACE); \
+	g_key_file_set_ ## TYPE (w->config_file, CONFIG_INI_GROUP, #NAME, w -> PLACE); \
 	w -> conf_data -> PLACE = w -> PLACE;
 
 	CONFIG_FIELDS(SAVE);

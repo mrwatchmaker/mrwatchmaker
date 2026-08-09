@@ -1340,66 +1340,90 @@ m4trace:configure.ac:7: -1- m4_pattern_allow([^am__fastdepCC_TRUE$])
 m4trace:configure.ac:7: -1- m4_pattern_allow([^am__fastdepCC_FALSE$])
 m4trace:configure.ac:7: -1- _AM_SUBST_NOTMAKE([am__fastdepCC_TRUE])
 m4trace:configure.ac:7: -1- _AM_SUBST_NOTMAKE([am__fastdepCC_FALSE])
-m4trace:configure.ac:8: -1- m4_pattern_allow([^HAVE_LIBPTHREAD$])
-m4trace:configure.ac:9: -1- m4_pattern_allow([^HAVE_LIBM$])
-m4trace:configure.ac:10: -1- PKG_CHECK_MODULES([GTK], [gtk+-3.0 glib-2.0])
-m4trace:configure.ac:10: -1- PKG_PROG_PKG_CONFIG
-m4trace:configure.ac:10: -1- m4_pattern_forbid([^_?PKG_[A-Z_]+$])
-m4trace:configure.ac:10: -1- m4_pattern_allow([^PKG_CONFIG(_(PATH|LIBDIR|SYSROOT_DIR|ALLOW_SYSTEM_(CFLAGS|LIBS)))?$])
-m4trace:configure.ac:10: -1- m4_pattern_allow([^PKG_CONFIG_(DISABLE_UNINSTALLED|TOP_BUILD_DIR|DEBUG_SPEW)$])
-m4trace:configure.ac:10: -1- m4_pattern_allow([^PKG_CONFIG$])
-m4trace:configure.ac:10: -1- m4_pattern_allow([^PKG_CONFIG_PATH$])
-m4trace:configure.ac:10: -1- m4_pattern_allow([^PKG_CONFIG_LIBDIR$])
-m4trace:configure.ac:10: -1- m4_pattern_allow([^PKG_CONFIG$])
-m4trace:configure.ac:10: -1- m4_pattern_allow([^GTK_CFLAGS$])
-m4trace:configure.ac:10: -1- m4_pattern_allow([^GTK_LIBS$])
-m4trace:configure.ac:10: -1- PKG_CHECK_EXISTS([gtk+-3.0 glib-2.0], [pkg_cv_[]GTK_CFLAGS=`$PKG_CONFIG --[]cflags "gtk+-3.0 glib-2.0" 2>/dev/null`
+m4trace:configure.ac:8: -1- m4_pattern_allow([^CXX$])
+m4trace:configure.ac:8: -1- m4_pattern_allow([^CXXFLAGS$])
+m4trace:configure.ac:8: -1- m4_pattern_allow([^LDFLAGS$])
+m4trace:configure.ac:8: -1- m4_pattern_allow([^LIBS$])
+m4trace:configure.ac:8: -1- m4_pattern_allow([^CPPFLAGS$])
+m4trace:configure.ac:8: -1- m4_pattern_allow([^CXX$])
+m4trace:configure.ac:8: -1- m4_pattern_allow([^ac_ct_CXX$])
+m4trace:configure.ac:8: -1- _AM_DEPENDENCIES([CXX])
+m4trace:configure.ac:8: -1- m4_pattern_allow([^CXXDEPMODE$])
+m4trace:configure.ac:8: -1- AM_CONDITIONAL([am__fastdepCXX], [
+  test "x$enable_dependency_tracking" != xno \
+  && test "$am_cv_CXX_dependencies_compiler_type" = gcc3])
+m4trace:configure.ac:8: -1- m4_pattern_allow([^am__fastdepCXX_TRUE$])
+m4trace:configure.ac:8: -1- m4_pattern_allow([^am__fastdepCXX_FALSE$])
+m4trace:configure.ac:8: -1- _AM_SUBST_NOTMAKE([am__fastdepCXX_TRUE])
+m4trace:configure.ac:8: -1- _AM_SUBST_NOTMAKE([am__fastdepCXX_FALSE])
+m4trace:configure.ac:9: -1- m4_pattern_allow([^HAVE_LIBPTHREAD$])
+m4trace:configure.ac:10: -1- m4_pattern_allow([^HAVE_LIBM$])
+m4trace:configure.ac:11: -1- PKG_CHECK_MODULES([GTK], [gtk+-3.0 glib-2.0])
+m4trace:configure.ac:11: -1- PKG_PROG_PKG_CONFIG
+m4trace:configure.ac:11: -1- m4_pattern_forbid([^_?PKG_[A-Z_]+$])
+m4trace:configure.ac:11: -1- m4_pattern_allow([^PKG_CONFIG(_(PATH|LIBDIR|SYSROOT_DIR|ALLOW_SYSTEM_(CFLAGS|LIBS)))?$])
+m4trace:configure.ac:11: -1- m4_pattern_allow([^PKG_CONFIG_(DISABLE_UNINSTALLED|TOP_BUILD_DIR|DEBUG_SPEW)$])
+m4trace:configure.ac:11: -1- m4_pattern_allow([^PKG_CONFIG$])
+m4trace:configure.ac:11: -1- m4_pattern_allow([^PKG_CONFIG_PATH$])
+m4trace:configure.ac:11: -1- m4_pattern_allow([^PKG_CONFIG_LIBDIR$])
+m4trace:configure.ac:11: -1- m4_pattern_allow([^PKG_CONFIG$])
+m4trace:configure.ac:11: -1- m4_pattern_allow([^GTK_CFLAGS$])
+m4trace:configure.ac:11: -1- m4_pattern_allow([^GTK_LIBS$])
+m4trace:configure.ac:11: -1- PKG_CHECK_EXISTS([gtk+-3.0 glib-2.0], [pkg_cv_[]GTK_CFLAGS=`$PKG_CONFIG --[]cflags "gtk+-3.0 glib-2.0" 2>/dev/null`
 		      test "x$?" != "x0" && pkg_failed=yes ], [pkg_failed=yes])
-m4trace:configure.ac:10: -1- PKG_CHECK_EXISTS([gtk+-3.0 glib-2.0], [pkg_cv_[]GTK_LIBS=`$PKG_CONFIG --[]libs "gtk+-3.0 glib-2.0" 2>/dev/null`
-		      test "x$?" != "x0" && pkg_failed=yes ], [pkg_failed=yes])
-m4trace:configure.ac:10: -1- _PKG_SHORT_ERRORS_SUPPORTED
-m4trace:configure.ac:11: -1- PKG_CHECK_MODULES([PORTAUDIO], [portaudio-2.0])
-m4trace:configure.ac:11: -1- m4_pattern_allow([^PORTAUDIO_CFLAGS$])
-m4trace:configure.ac:11: -1- m4_pattern_allow([^PORTAUDIO_LIBS$])
-m4trace:configure.ac:11: -1- PKG_CHECK_EXISTS([portaudio-2.0], [pkg_cv_[]PORTAUDIO_CFLAGS=`$PKG_CONFIG --[]cflags "portaudio-2.0" 2>/dev/null`
-		      test "x$?" != "x0" && pkg_failed=yes ], [pkg_failed=yes])
-m4trace:configure.ac:11: -1- PKG_CHECK_EXISTS([portaudio-2.0], [pkg_cv_[]PORTAUDIO_LIBS=`$PKG_CONFIG --[]libs "portaudio-2.0" 2>/dev/null`
+m4trace:configure.ac:11: -1- PKG_CHECK_EXISTS([gtk+-3.0 glib-2.0], [pkg_cv_[]GTK_LIBS=`$PKG_CONFIG --[]libs "gtk+-3.0 glib-2.0" 2>/dev/null`
 		      test "x$?" != "x0" && pkg_failed=yes ], [pkg_failed=yes])
 m4trace:configure.ac:11: -1- _PKG_SHORT_ERRORS_SUPPORTED
-m4trace:configure.ac:12: -1- PKG_CHECK_MODULES([FFTW], [fftw3f])
-m4trace:configure.ac:12: -1- m4_pattern_allow([^FFTW_CFLAGS$])
-m4trace:configure.ac:12: -1- m4_pattern_allow([^FFTW_LIBS$])
-m4trace:configure.ac:12: -1- PKG_CHECK_EXISTS([fftw3f], [pkg_cv_[]FFTW_CFLAGS=`$PKG_CONFIG --[]cflags "fftw3f" 2>/dev/null`
+m4trace:configure.ac:12: -1- PKG_CHECK_MODULES([PORTAUDIO], [portaudio-2.0])
+m4trace:configure.ac:12: -1- m4_pattern_allow([^PORTAUDIO_CFLAGS$])
+m4trace:configure.ac:12: -1- m4_pattern_allow([^PORTAUDIO_LIBS$])
+m4trace:configure.ac:12: -1- PKG_CHECK_EXISTS([portaudio-2.0], [pkg_cv_[]PORTAUDIO_CFLAGS=`$PKG_CONFIG --[]cflags "portaudio-2.0" 2>/dev/null`
 		      test "x$?" != "x0" && pkg_failed=yes ], [pkg_failed=yes])
-m4trace:configure.ac:12: -1- PKG_CHECK_EXISTS([fftw3f], [pkg_cv_[]FFTW_LIBS=`$PKG_CONFIG --[]libs "fftw3f" 2>/dev/null`
+m4trace:configure.ac:12: -1- PKG_CHECK_EXISTS([portaudio-2.0], [pkg_cv_[]PORTAUDIO_LIBS=`$PKG_CONFIG --[]libs "portaudio-2.0" 2>/dev/null`
 		      test "x$?" != "x0" && pkg_failed=yes ], [pkg_failed=yes])
 m4trace:configure.ac:12: -1- _PKG_SHORT_ERRORS_SUPPORTED
-m4trace:configure.ac:14: -1- m4_pattern_allow([^WINDRES$])
-m4trace:configure.ac:15: -1- AM_CONDITIONAL([HAVE_WINDRES], [test x$WINDRES != x])
-m4trace:configure.ac:15: -1- m4_pattern_allow([^HAVE_WINDRES_TRUE$])
-m4trace:configure.ac:15: -1- m4_pattern_allow([^HAVE_WINDRES_FALSE$])
-m4trace:configure.ac:15: -1- _AM_SUBST_NOTMAKE([HAVE_WINDRES_TRUE])
-m4trace:configure.ac:15: -1- _AM_SUBST_NOTMAKE([HAVE_WINDRES_FALSE])
-m4trace:configure.ac:17: -1- AM_CONDITIONAL([BE_WINDOWS], [test x$OS = xWindows_NT])
-m4trace:configure.ac:17: -1- m4_pattern_allow([^BE_WINDOWS_TRUE$])
-m4trace:configure.ac:17: -1- m4_pattern_allow([^BE_WINDOWS_FALSE$])
-m4trace:configure.ac:17: -1- _AM_SUBST_NOTMAKE([BE_WINDOWS_TRUE])
-m4trace:configure.ac:17: -1- _AM_SUBST_NOTMAKE([BE_WINDOWS_FALSE])
-m4trace:configure.ac:18: -1- AM_COND_IF([BE_WINDOWS], [AC_CONFIG_LINKS([icons/tg-timer.ico:icons/tg-timer.ico])])
-m4trace:configure.ac:20: -1- CC_CHECK_LDFLAGS([-Wl,--as-needed], [AC_SUBST([AM_LDFLAGS], [-Wl,--as-needed])], [])
-m4trace:configure.ac:20: -1- _m4_warn([syntax], [AC_LANG_CONFTEST: no AC_LANG_SOURCE call detected in body], [../../../autoconf-2.69/lib/autoconf/lang.m4:193: AC_LANG_CONFTEST is expanded from...
+m4trace:configure.ac:13: -1- PKG_CHECK_MODULES([FFTW], [fftw3f])
+m4trace:configure.ac:13: -1- m4_pattern_allow([^FFTW_CFLAGS$])
+m4trace:configure.ac:13: -1- m4_pattern_allow([^FFTW_LIBS$])
+m4trace:configure.ac:13: -1- PKG_CHECK_EXISTS([fftw3f], [pkg_cv_[]FFTW_CFLAGS=`$PKG_CONFIG --[]cflags "fftw3f" 2>/dev/null`
+		      test "x$?" != "x0" && pkg_failed=yes ], [pkg_failed=yes])
+m4trace:configure.ac:13: -1- PKG_CHECK_EXISTS([fftw3f], [pkg_cv_[]FFTW_LIBS=`$PKG_CONFIG --[]libs "fftw3f" 2>/dev/null`
+		      test "x$?" != "x0" && pkg_failed=yes ], [pkg_failed=yes])
+m4trace:configure.ac:13: -1- _PKG_SHORT_ERRORS_SUPPORTED
+m4trace:configure.ac:14: -1- PKG_CHECK_MODULES([OPENCV], [opencv4])
+m4trace:configure.ac:14: -1- m4_pattern_allow([^OPENCV_CFLAGS$])
+m4trace:configure.ac:14: -1- m4_pattern_allow([^OPENCV_LIBS$])
+m4trace:configure.ac:14: -1- PKG_CHECK_EXISTS([opencv4], [pkg_cv_[]OPENCV_CFLAGS=`$PKG_CONFIG --[]cflags "opencv4" 2>/dev/null`
+		      test "x$?" != "x0" && pkg_failed=yes ], [pkg_failed=yes])
+m4trace:configure.ac:14: -1- PKG_CHECK_EXISTS([opencv4], [pkg_cv_[]OPENCV_LIBS=`$PKG_CONFIG --[]libs "opencv4" 2>/dev/null`
+		      test "x$?" != "x0" && pkg_failed=yes ], [pkg_failed=yes])
+m4trace:configure.ac:14: -1- _PKG_SHORT_ERRORS_SUPPORTED
+m4trace:configure.ac:16: -1- m4_pattern_allow([^WINDRES$])
+m4trace:configure.ac:17: -1- AM_CONDITIONAL([HAVE_WINDRES], [test x$WINDRES != x])
+m4trace:configure.ac:17: -1- m4_pattern_allow([^HAVE_WINDRES_TRUE$])
+m4trace:configure.ac:17: -1- m4_pattern_allow([^HAVE_WINDRES_FALSE$])
+m4trace:configure.ac:17: -1- _AM_SUBST_NOTMAKE([HAVE_WINDRES_TRUE])
+m4trace:configure.ac:17: -1- _AM_SUBST_NOTMAKE([HAVE_WINDRES_FALSE])
+m4trace:configure.ac:19: -1- AM_CONDITIONAL([BE_WINDOWS], [test x$OS = xWindows_NT])
+m4trace:configure.ac:19: -1- m4_pattern_allow([^BE_WINDOWS_TRUE$])
+m4trace:configure.ac:19: -1- m4_pattern_allow([^BE_WINDOWS_FALSE$])
+m4trace:configure.ac:19: -1- _AM_SUBST_NOTMAKE([BE_WINDOWS_TRUE])
+m4trace:configure.ac:19: -1- _AM_SUBST_NOTMAKE([BE_WINDOWS_FALSE])
+m4trace:configure.ac:20: -1- AM_COND_IF([BE_WINDOWS], [AC_CONFIG_LINKS([icons/tg-timer.ico:icons/tg-timer.ico])])
+m4trace:configure.ac:22: -1- CC_CHECK_LDFLAGS([-Wl,--as-needed], [AC_SUBST([AM_LDFLAGS], [-Wl,--as-needed])], [])
+m4trace:configure.ac:22: -1- _m4_warn([syntax], [AC_LANG_CONFTEST: no AC_LANG_SOURCE call detected in body], [../../../autoconf-2.69/lib/autoconf/lang.m4:193: AC_LANG_CONFTEST is expanded from...
 ../../../autoconf-2.69/lib/autoconf/general.m4:2661: _AC_LINK_IFELSE is expanded from...
 ../../../autoconf-2.69/lib/autoconf/general.m4:2678: AC_LINK_IFELSE is expanded from...
 ../../../autoconf-2.69/lib/m4sugar/m4sh.m4:639: AS_IF is expanded from...
 ../../../autoconf-2.69/lib/autoconf/general.m4:2031: AC_CACHE_VAL is expanded from...
 ../../../autoconf-2.69/lib/autoconf/general.m4:2052: AC_CACHE_CHECK is expanded from...
 m4/attributes.m4:87: CC_CHECK_LDFLAGS is expanded from...
-configure.ac:20: the top level])
-m4trace:configure.ac:20: -1- m4_pattern_allow([^AM_LDFLAGS$])
-m4trace:configure.ac:21: -1- CC_CHECK_CFLAGS_APPEND([-Wall -Wextra], [], [])
-m4trace:configure.ac:21: -1- CC_CHECK_CFLAG_APPEND([$flag], [], [])
-m4trace:configure.ac:21: -2- CC_CHECK_CFLAGS_SILENT([$flag])
-m4trace:configure.ac:21: -2- _m4_warn([syntax], [AC_LANG_CONFTEST: no AC_LANG_SOURCE call detected in body], [../../../autoconf-2.69/lib/autoconf/lang.m4:193: AC_LANG_CONFTEST is expanded from...
+configure.ac:22: the top level])
+m4trace:configure.ac:22: -1- m4_pattern_allow([^AM_LDFLAGS$])
+m4trace:configure.ac:23: -1- CC_CHECK_CFLAGS_APPEND([-Wall -Wextra], [], [])
+m4trace:configure.ac:23: -1- CC_CHECK_CFLAG_APPEND([$flag], [], [])
+m4trace:configure.ac:23: -2- CC_CHECK_CFLAGS_SILENT([$flag])
+m4trace:configure.ac:23: -2- _m4_warn([syntax], [AC_LANG_CONFTEST: no AC_LANG_SOURCE call detected in body], [../../../autoconf-2.69/lib/autoconf/lang.m4:193: AC_LANG_CONFTEST is expanded from...
 ../../../autoconf-2.69/lib/autoconf/general.m4:2590: _AC_COMPILE_IFELSE is expanded from...
 ../../../autoconf-2.69/lib/autoconf/general.m4:2606: AC_COMPILE_IFELSE is expanded from...
 ../../../autoconf-2.69/lib/m4sugar/m4sh.m4:639: AS_IF is expanded from...
@@ -1407,14 +1431,14 @@ m4trace:configure.ac:21: -2- _m4_warn([syntax], [AC_LANG_CONFTEST: no AC_LANG_SO
 m4/attributes.m4:38: CC_CHECK_CFLAGS_SILENT is expanded from...
 m4/attributes.m4:67: CC_CHECK_CFLAG_APPEND is expanded from...
 m4/attributes.m4:78: CC_CHECK_CFLAGS_APPEND is expanded from...
-configure.ac:21: the top level])
-m4trace:configure.ac:23: -1- _m4_warn([obsolete], [AC_OUTPUT should be used without arguments.
+configure.ac:23: the top level])
+m4trace:configure.ac:25: -1- _m4_warn([obsolete], [AC_OUTPUT should be used without arguments.
 You should run autoupdate.], [])
-m4trace:configure.ac:23: -1- m4_pattern_allow([^LIB@&t@OBJS$])
-m4trace:configure.ac:23: -1- m4_pattern_allow([^LTLIBOBJS$])
-m4trace:configure.ac:23: -1- AM_CONDITIONAL([am__EXEEXT], [test -n "$EXEEXT"])
-m4trace:configure.ac:23: -1- m4_pattern_allow([^am__EXEEXT_TRUE$])
-m4trace:configure.ac:23: -1- m4_pattern_allow([^am__EXEEXT_FALSE$])
-m4trace:configure.ac:23: -1- _AM_SUBST_NOTMAKE([am__EXEEXT_TRUE])
-m4trace:configure.ac:23: -1- _AM_SUBST_NOTMAKE([am__EXEEXT_FALSE])
-m4trace:configure.ac:23: -1- _AM_OUTPUT_DEPENDENCY_COMMANDS
+m4trace:configure.ac:25: -1- m4_pattern_allow([^LIB@&t@OBJS$])
+m4trace:configure.ac:25: -1- m4_pattern_allow([^LTLIBOBJS$])
+m4trace:configure.ac:25: -1- AM_CONDITIONAL([am__EXEEXT], [test -n "$EXEEXT"])
+m4trace:configure.ac:25: -1- m4_pattern_allow([^am__EXEEXT_TRUE$])
+m4trace:configure.ac:25: -1- m4_pattern_allow([^am__EXEEXT_FALSE$])
+m4trace:configure.ac:25: -1- _AM_SUBST_NOTMAKE([am__EXEEXT_TRUE])
+m4trace:configure.ac:25: -1- _AM_SUBST_NOTMAKE([am__EXEEXT_FALSE])
+m4trace:configure.ac:25: -1- _AM_OUTPUT_DEPENDENCY_COMMANDS

@@ -16,9 +16,10 @@
     51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 */
 
-#include "tg.h"
+#include "mrwatchmaker.h"
 #include "i18n.h"
 #include "serial_motor.h"
+#include "visual_baseline.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <gdk-pixbuf/gdk-pixbuf.h>
@@ -103,6 +104,12 @@ static int micro_adj_base_valid = 0;
 #define MICRO_HOLD_GAP_US   35000U
 /* 기준점 미세조정은 저항 구간을 넘기기 위해 토크를 약간 상향 */
 #define MICRO_ADJ_TORQUE_LIMIT 220
+/* 카메라 시야 밖일 때 자동 기준점: Face/Arm ± 와 동일한 틱으로 CH 탐색 */
+#define VB_SEARCH_FACE_STEPS_EACH_SIDE 14
+#define VB_SEARCH_ARM_STEPS_EACH_SIDE  10
+#define VB_SEARCH_STABLE_FRAMES        5
+#define VB_SEARCH_FRAMES_PER_TRY       35
+#define VB_SEARCH_SETTLE_MS            550
 /* 자동/수동 자세 이동은 목표 도달 우선 */
 #define POSITION_MOVE_TORQUE_LIMIT 260
 /* 와인더는 연속 구동 중 누적 부하가 있어 토크를 더 확보 */
@@ -131,6 +138,22 @@ static int logical_arm_from_raw(int raw, int vd) {
 
 static int clamp_face_hard(int v);
 static int clamp_arm_hard(int v);
+
+static int raw_face_from_logical(int logical, int vd) {
+	return clamp_face_hard(norm4096_pc(logical + vd));
+}
+static int raw_arm_from_logical(int logical, int vd) {
+	return clamp_arm_hard(norm4096_pc(logical + vd));
+}
+
+static void baseline_ch_targets_logical(int *face_log, int *arm_log)
+{
+	/* face_positions[] = motor_move() 인자(논리 틱); 시각보정은 motor_move 내부에서 가산 */
+	if (face_log)
+		*face_log = norm4096_pc(face_positions[BASE_SLOT_INDEX]);
+	if (arm_log)
+		*arm_log = norm4096_pc(arm_positions[BASE_SLOT_INDEX]);
+}
 
 /* 논리틱 원호(4096)에서 base → cur 최단 부호 거리 (Android tickDeltaSigned 와 동일) */
 static int tick_delta_signed(int base, int cur) {
@@ -191,6 +214,28 @@ static void micro_motor_schedule_live_readout(int face_log, int arm_log, struct 
 static gpointer sync_last_pos_from_servos_thread(gpointer data);
 static gboolean vis_cal_err_idle(gpointer data);
 static gboolean vis_cal_err_read_idle(gpointer data);
+static void vb_load_reference_if_exists(struct output_panel *op);
+static void camera_preview_start(struct output_panel *op);
+static void camera_preview_start_async(struct output_panel *op);
+static void camera_preview_stop(struct output_panel *op);
+static void show_camera_baseline_overlay(struct output_panel *op);
+static void camera_overlay_close(void);
+void on_camera_auto_cancel_clicked(GtkWidget *widget, gpointer data);
+
+static void output_panel_ensure_visual_baseline(struct output_panel *op)
+{
+	if (!op)
+		return;
+	if (!op->visual_baseline)
+		op->visual_baseline = vb_create();
+}
+static void output_panel_try_auto_camera_baseline(struct output_panel *op, int continue_auto_measure);
+static void output_panel_evaluate_auto_baseline(struct output_panel *op, int continue_auto_measure);
+static void visual_baseline_start_auto(struct output_panel *op, int continue_auto_measure);
+static gboolean camera_auto_defer_idle(gpointer data);
+static gboolean camera_bootstrap_idle(gpointer data);
+static gboolean baseline_startup_check_idle(gpointer data);
+static int output_panel_get_logical_pose(int *lf, int *la);
 
 /* 여러 워커 스레드가 동시에 실패하면 g_idle_add가 중복되어 같은 오류 창이 연속 표시됨 → idle 1개로 통합 */
 static GMutex g_servo_err_sched_mutex;
@@ -237,9 +282,42 @@ typedef struct {
 static gboolean on_micro_button_press(GtkWidget *w, GdkEventButton *ev, gpointer data);
 static gboolean on_micro_button_release(GtkWidget *w, GdkEventButton *ev, gpointer data);
 void on_batch_apply_clicked(GtkWidget *w, gpointer d);
+static void auto_measure_start_sequence(struct output_panel *op, int skip_baseline_gate);
+static gpointer manual_finish_home_thread_func(gpointer data);
+static gboolean manual_finish_after_home_idle(gpointer data);
 static void update_winder_speed_buttons(struct output_panel *op);
 static void on_winder_speed_clicked(GtkWidget *widget, gpointer data);
 static GtkWidget *s_ref9_window;
+
+#define CAM_OVERLAY_PARENT_KEY "cam-overlay-parent"
+static GtkWidget *s_camera_overlay_window;
+static GtkWidget *s_camera_overlay_image;
+static GtkWidget *s_camera_overlay_status;
+static struct output_panel *s_camera_overlay_op;
+static gint64 s_camera_auto_block_until_ms = 0;
+static gint64 s_camera_auto_pause_until_ms = 0;
+static guint s_camera_auto_defer_id = 0;
+static int s_camera_auto_defer_continue = 0;
+
+static gint64 camera_auto_now_ms(void)
+{
+	return g_get_monotonic_time() / 1000;
+}
+
+static void camera_auto_block_for(guint seconds)
+{
+	s_camera_auto_block_until_ms = camera_auto_now_ms() + (gint64)seconds * 1000;
+}
+
+static int camera_auto_is_blocked(void)
+{
+	return camera_auto_now_ms() < s_camera_auto_block_until_ms;
+}
+
+static int camera_auto_is_paused(void)
+{
+	return camera_auto_now_ms() < s_camera_auto_pause_until_ms;
+}
 /* 암 풀기 후 손으로 돌릴 때 기준점 미세조정 실시간 반영 (워커 스레드에서 Present 읽기 → 메인 idle로 라벨 갱신) */
 static GThread *s_arm_release_poll_thread;
 static volatile gint s_arm_release_poll_run;
@@ -250,6 +328,7 @@ static void arm_release_live_poll_stop(void);
 static void arm_release_live_poll_start(struct output_panel *op);
 static gchar *reference_9oclock_image_path(void);
 static void show_reference_9oclock_window(struct output_panel *op);
+static void reference_9oclock_close(void);
 static const int g_pos_ui_order[POS_FIXED_COUNT] = {4, 5, 0, 1, 2, 3};
 
 static const char *slot_name_short(int slot_idx)
@@ -1123,8 +1202,22 @@ void op_set_border(struct output_panel *op, int i)
 
 void op_destroy(struct output_panel *op)
 {
+	if (!op)
+		return;
 	if (s_arm_release_poll_op == op)
 		arm_release_live_poll_stop();
+	if (op->camera_preview_timer != 0) {
+		g_source_remove(op->camera_preview_timer);
+		op->camera_preview_timer = 0;
+	}
+	op->camera_auto_cancel = 1;
+	if (s_camera_overlay_op == op)
+		camera_overlay_close();
+	if (op->visual_baseline) {
+		vb_close_camera(op->visual_baseline);
+		vb_destroy(op->visual_baseline);
+		op->visual_baseline = NULL;
+	}
 	snapshot_destroy(op->snst);
 	free(op);
 }
@@ -1152,6 +1245,12 @@ struct output_panel *init_output_panel(struct computer *comp, struct snapshot *s
 		op->pos_measured[i] = 0;
 	}
 	op->micro_motor_readout_label = NULL;
+	op->pos_scroll = NULL;
+	op->camera_preview_timer = 0;
+	op->camera_auto_active = 0;
+	op->camera_auto_cancel = 0;
+	op->camera_auto_continue_measure = 0;
+	op->visual_baseline = vb_create();
 	op->auto_measure_pending_ch_return = 0;
 	op->winder_active = 0;
 	op->winder_state = 0;
@@ -1450,18 +1549,18 @@ struct output_panel *init_output_panel(struct computer *comp, struct snapshot *s
 		gtk_style_context_add_class(gtk_widget_get_style_context(winder_frame), "pos-frame");
 
 		// Positional Error 영역을 스크롤 가능하게
-		GtkWidget *pos_scroll = gtk_scrolled_window_new(NULL, NULL);
-		gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(pos_scroll),
+		op->pos_scroll = gtk_scrolled_window_new(NULL, NULL);
+		gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(op->pos_scroll),
 			GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
 		/* 고정 6자세 + 버튼 */
-		gtk_scrolled_window_set_min_content_height(GTK_SCROLLED_WINDOW(pos_scroll), 520);
-		gtk_widget_set_size_request(pos_scroll, 520, -1);
-		gtk_container_add(GTK_CONTAINER(pos_scroll), pos_frame);
+		gtk_scrolled_window_set_min_content_height(GTK_SCROLLED_WINDOW(op->pos_scroll), 380);
+		gtk_widget_set_size_request(op->pos_scroll, 520, -1);
+		gtk_container_add(GTK_CONTAINER(op->pos_scroll), pos_frame);
 
 		// hrow_top: pos_scroll(왼쪽) + winder_frame(오른쪽)
 		GtkWidget *hrow_top = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
 		// 작은 해상도에서도 자세차 영역이 너무 작아지지 않도록
-		gtk_box_pack_start(GTK_BOX(hrow_top), pos_scroll,   TRUE,  TRUE,  0);
+		gtk_box_pack_start(GTK_BOX(hrow_top), op->pos_scroll, TRUE,  TRUE,  0);
 		gtk_box_pack_start(GTK_BOX(hrow_top), winder_frame, TRUE,  TRUE,  0);
 		gtk_box_pack_start(GTK_BOX(vbox3),    hrow_top,     TRUE,  TRUE,  0);
 
@@ -1573,6 +1672,9 @@ struct output_panel *init_output_panel(struct computer *comp, struct snapshot *s
 
 	g_atomic_int_set(&s_servo_boot_sync_in_progress, 1);
 	g_thread_new("sync_servo_pose", sync_last_pos_from_servos_thread, op);
+
+	vb_load_reference_if_exists(op);
+	g_idle_add(camera_bootstrap_idle, op);
 
 	return op;
 }
@@ -1802,7 +1904,9 @@ static void refresh_pos_coord_labels(struct output_panel *op)
 		if (!op->pos_coord_labels[i])
 			continue;
 		char buf[96];
-		snprintf(buf, sizeof(buf), _("Face %d  │  Arm %d"), face_positions[i], arm_positions[i]);
+		int f = norm4096_pc(face_positions[i]);
+		int a = norm4096_pc(arm_positions[i]);
+		snprintf(buf, sizeof(buf), _("Face %d  │  Arm %d"), f, a);
 		gtk_label_set_text(GTK_LABEL(op->pos_coord_labels[i]), buf);
 	}
 }
@@ -1845,8 +1949,10 @@ static void update_manual_measure_button_visibility(struct output_panel *op, int
 	int visible = 0;
 	int has_any_baseline = has_valid_baseline || (face_logical >= 0 && arm_logical >= 0);
 	if (has_any_baseline) {
-		int dF = tick_delta_signed(face_positions[BASE_SLOT_INDEX], face_logical);
-		int dA = tick_delta_signed(arm_positions[BASE_SLOT_INDEX], arm_logical);
+		int chF, chA;
+		baseline_ch_targets_logical(&chF, &chA);
+		int dF = tick_delta_signed(chF, face_logical);
+		int dA = tick_delta_signed(chA, arm_logical);
 		visible = (abs(dF) < POS_AUTO_MEASURE_BASELINE_MAX_DELTA_TICKS
 		        && abs(dA) < POS_AUTO_MEASURE_BASELINE_MAX_DELTA_TICKS);
 	}
@@ -1861,10 +1967,87 @@ static void update_manual_measure_button_visibility(struct output_panel *op, int
 			gtk_widget_hide(op->manual_measure_hint_label);
 		} else {
 			gtk_label_set_text(GTK_LABEL(op->manual_measure_hint_label),
-				_("CH 기준점 오차가 큽니다 (허용 ±100).\n기준점 미세조정 후 자세별 측정 버튼이 표시됩니다."));
+				_("CH 기준점 오차가 큽니다. 자세차 자동측정 시 카메라로 자동 맞춥니다.\nFace/Arm ± 로 수동 조정할 수도 있습니다."));
 			gtk_widget_show(op->manual_measure_hint_label);
 		}
 	}
+}
+
+static int output_panel_get_logical_pose(int *lf, int *la)
+{
+	int vdF, vdA;
+	if (!lf || !la)
+		return 0;
+	if (micro_adj_base_valid) {
+		*lf = micro_adj_base_face;
+		*la = micro_adj_base_arm;
+		return 1;
+	}
+	motor_get_visual_goal_deltas(&vdF, &vdA);
+	*lf = logical_face_from_raw(last_pos1, vdF);
+	*la = logical_arm_from_raw(last_pos2, vdA);
+	return 1;
+}
+
+static void output_panel_abort_camera_auto_baseline(struct output_panel *op)
+{
+	if (!op)
+		return;
+	op->camera_auto_cancel = 1;
+	op->camera_auto_active = 0;
+	camera_preview_stop(op);
+	camera_overlay_close();
+	if (s_camera_auto_defer_id != 0) {
+		g_source_remove(s_camera_auto_defer_id);
+		s_camera_auto_defer_id = 0;
+	}
+}
+
+static void output_panel_evaluate_auto_baseline(struct output_panel *op, int continue_auto_measure)
+{
+	int lf, la, dF, dA;
+	int tick_bad = 0;
+	int cam_bad = 0;
+
+	if (!op || op->camera_auto_active)
+		return;
+	if (op->auto_measure_state != 0)
+		return;
+	/* 와인더는 9·12·3·6시 등을 돌리므로 CH 화면/틱 검사를 하면 오탐으로 끊김 */
+	if (op->winder_active)
+		return;
+	if (camera_auto_is_blocked())
+		return;
+	if (s_camera_overlay_window && GTK_IS_WIDGET(s_camera_overlay_window))
+		return;
+	if (!output_panel_get_logical_pose(&lf, &la))
+		return;
+
+	{
+		int chF, chA;
+		baseline_ch_targets_logical(&chF, &chA);
+		dF = tick_delta_signed(chF, lf);
+		dA = tick_delta_signed(chA, la);
+	}
+	tick_bad = (abs(dF) >= POS_AUTO_MEASURE_BASELINE_MAX_DELTA_TICKS
+	         || abs(dA) >= POS_AUTO_MEASURE_BASELINE_MAX_DELTA_TICKS);
+
+	/* 기준 사진이 있으면 틱이 맞아도 카메라로 CH 화면을 반드시 확인 */
+	if (op->visual_baseline && vb_has_reference(op->visual_baseline)) {
+		if (!vb_has_camera(op->visual_baseline))
+			vb_open_camera_auto(op->visual_baseline);
+		if (!vb_has_camera(op->visual_baseline)) {
+			cam_bad = 1;
+		} else {
+			double score = 0.0;
+			if (!vb_grab_and_score(op->visual_baseline, &score)
+			    || score < VB_MATCH_OK_THRESHOLD)
+				cam_bad = 1;
+		}
+	}
+
+	if (tick_bad || cam_bad)
+		output_panel_try_auto_camera_baseline(op, continue_auto_measure);
 }
 
 static gboolean refresh_micro_motor_label_idle(gpointer data)
@@ -1888,11 +2071,11 @@ static void micro_adj_refresh_from_present_reads(int r1, int r2, struct output_p
 		micro_adj_base_valid = 0;
 	}
 	if (r1 >= 0) {
-		last_pos1 = clamp_face_hard(r1);
+		last_pos1 = clamp_face_hard(norm4096_pc(micro_adj_base_face));
 		g_spin_face = last_pos1;
 	}
 	if (r2 >= 0) {
-		last_pos2 = clamp_arm_hard(r2);
+		last_pos2 = clamp_arm_hard(norm4096_pc(micro_adj_base_arm));
 		g_spin_arm = last_pos2;
 	}
 	if (op)
@@ -2157,10 +2340,9 @@ static void motor_return_to_9h_pose_inner(struct output_panel *op_for_label_idle
 	if (before2 < 0) before2 = last_pos2;
 	motor_move(1, p1, dur1, 0);
 	g_usleep(100000);
-	/* cb -> 9시 복귀에서 ID2(암) 명령이 간헐적으로 씹히는 경우를 줄이기 위해
-	 * 암 토크를 한 번 더 확실히 올리고 이동 명령을 보강한다. */
+	/* cb→ch(베이스) 복귀: 암(ID2) 토크 100이면 시계 무게·케이블에 못 돌아옴 → 자세 이동과 동일 상한 */
 	motor_write_byte(2, 0x28, 1);
-	motor_write_word(2, 48, 100);
+	motor_write_word(2, 48, POSITION_MOVE_TORQUE_LIMIT);
 	motor_move(2, p2, dur2, 0);
 	g_usleep(120000);
 	motor_move(2, p2, dur2, 0);
@@ -2192,11 +2374,11 @@ static void motor_return_to_9h_pose_inner(struct output_panel *op_for_label_idle
 			int retry2 = calc_duration(r2_chk >= 0 ? r2_chk : last_pos2, p2);
 			if (retry1 < 1200) retry1 = 1200;
 			if (retry2 < 1200) retry2 = 1200;
-			motor_ensure_torque_on();
+			motor_ensure_torque_on_for_position_move();
 			motor_move(1, p1, retry1, 0);
 			g_usleep(100000);
 			motor_write_byte(2, 0x28, 1);
-			motor_write_word(2, 48, 100);
+			motor_write_word(2, 48, POSITION_MOVE_TORQUE_LIMIT);
 			motor_move(2, p2, retry2, 0);
 			g_usleep((retry2 > retry1 ? retry2 : retry1) * 1000);
 		}
@@ -2272,15 +2454,43 @@ void op_emergency_home_9h(void)
 static gpointer sync_last_pos_from_servos_thread(gpointer data) {
 	struct output_panel *op = (struct output_panel *)data;
 
-	/* 시작 지연의 주원인인 무거운 Present 재시도는 제거.
-	 * 최초 기준점은 사용자가 +/- 입력 시점에 빠르게 동기화한다. */
 	micro_adj_base_valid = 0;
 	if (motor_init(motor_get_port())) {
+		motor_ensure_torque_on();
+		g_usleep(250000);
+		{
+			int r1 = motor_read_present_position(1);
+			int r2 = motor_read_present_position(2);
+			micro_adj_refresh_from_present_reads(r1, r2, op);
+		}
+		motor_disable_torque_all();
 		motor_close();
 	}
-	if (op) g_idle_add(refresh_micro_motor_label_idle, op);
+	if (op) {
+		g_idle_add(refresh_micro_motor_label_idle, op);
+		g_idle_add(baseline_startup_check_idle, op);
+	}
 	g_atomic_int_set(&s_servo_boot_sync_in_progress, 0);
 	return NULL;
+}
+
+static gboolean baseline_startup_defer_idle(gpointer data)
+{
+	(void)data;
+	/* 시작 직후에는 카메라 자동 기준점을 띄우지 않는다.
+	 * 사용자가 [자동 기준점]/[자세차 자동 측정]을 눌렀을 때만 실행 */
+	return G_SOURCE_REMOVE;
+}
+
+static gboolean baseline_startup_check_idle(gpointer data)
+{
+	struct output_panel *op = (struct output_panel *)data;
+	if (!op)
+		return G_SOURCE_REMOVE;
+	vb_load_reference_if_exists(op);
+	/* 앱 시작 시 자동 팝업 방지: 자동 기준점은 사용자 동작으로만 시작 */
+	g_timeout_add(2500, baseline_startup_defer_idle, op);
+	return G_SOURCE_REMOVE;
 }
 
 /* ── 수동 자세별 측정(버튼): 해당 자세로 이동 후 카운트다운 뒤 값 저장 ───────── */
@@ -2351,15 +2561,33 @@ static gboolean manual_measure_tick(gpointer data) {
 				_("베이스로 복귀 중... 복귀 후 자세차 진단 리포트가 실행됩니다."));
 		/* 무거운 모터 이동 전에 UI 문구를 먼저 화면에 반영 */
 		op_ui_flush_pending();
-		motor_return_to_9h_pose(op);
-		/* 베이스 복귀 후 진단 리포트 실행 */
-		extern void generate_analysis(struct output_panel *op);
-		generate_analysis(op);
+		g_thread_new("manual_home", manual_finish_home_thread_func, op);
 	}
 
 	manual_reset_button_labels(op);
-	set_manual_buttons_enabled(op, 1);
 	op->manual_measure_target = -1;
+	return G_SOURCE_REMOVE;
+}
+
+static gpointer manual_finish_home_thread_func(gpointer data)
+{
+	struct output_panel *op = (struct output_panel *)data;
+	if (op)
+		motor_return_to_9h_pose_inner(op);
+	if (op)
+		g_idle_add(manual_finish_after_home_idle, op);
+	return NULL;
+}
+
+static gboolean manual_finish_after_home_idle(gpointer data)
+{
+	struct output_panel *op = (struct output_panel *)data;
+	if (!op)
+		return G_SOURCE_REMOVE;
+	extern void generate_analysis(struct output_panel *op);
+	generate_analysis(op);
+	manual_reset_button_labels(op);
+	set_manual_buttons_enabled(op, 1);
 	return G_SOURCE_REMOVE;
 }
 
@@ -2428,10 +2656,18 @@ static gpointer manual_move_thread_func(gpointer data) {
 void on_manual_measure_clicked(GtkWidget *widget, gpointer data) {
 	struct output_panel *op = (struct output_panel *)data;
 	if (op->manual_measure_target != -1) return; /* 진행 중이면 무시 */
+	if (op->auto_measure_state != 0) return;
+	if (op->camera_auto_active) return;
 
 	arm_release_live_poll_stop();
 	int target = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(widget), "manual_target"));
 	if (target < 0 || target >= POS_FIXED_COUNT) return;
+
+	/* CH(기준) 측정: 방금 일괄적용한 목표 틱으로 이동 */
+	if (target == BASE_SLOT_INDEX) {
+		last_pos1 = face_positions[BASE_SLOT_INDEX];
+		last_pos2 = arm_positions[BASE_SLOT_INDEX];
+	}
 
 	if (!motor_init(motor_get_port())) {
 		GtkWidget *win = gtk_widget_get_toplevel(op->panel);
@@ -2728,8 +2964,8 @@ static gpointer micro_rep_worker(gpointer unused)
 				if (rrF >= 0 && rrA >= 0) {
 					int lf2 = logical_face_from_raw(rrF, vdF);
 					int la2 = logical_arm_from_raw(rrA, vdA);
-					last_pos1 = clamp_face_hard(rrF);
-					last_pos2 = clamp_arm_hard(rrA);
+					last_pos1 = clamp_face_hard(norm4096_pc(lf2));
+					last_pos2 = clamp_arm_hard(norm4096_pc(la2));
 					micro_motor_schedule_live_readout(lf2, la2, op);
 				} else {
 					last_pos1 = next_lf;
@@ -2770,8 +3006,8 @@ static gpointer micro_rep_worker(gpointer unused)
 				if (rrF >= 0 && rrA >= 0) {
 					int lf2 = logical_face_from_raw(rrF, vdF);
 					int la2 = logical_arm_from_raw(rrA, vdA);
-					last_pos1 = clamp_face_hard(rrF);
-					last_pos2 = clamp_arm_hard(rrA);
+					last_pos1 = clamp_face_hard(norm4096_pc(lf2));
+					last_pos2 = clamp_arm_hard(norm4096_pc(la2));
 					micro_motor_schedule_live_readout(lf2, la2, op);
 				} else {
 					last_pos1 = lf;
@@ -2794,100 +3030,1105 @@ worker_cleanup:
 	return NULL;
 }
 
+/* ── CH 카메라 자동 기준점 ───────────────────────────────────────── */
+
+static void vb_load_reference_if_exists(struct output_panel *op)
+{
+	if (!op || !op->visual_baseline)
+		return;
+	gchar *path = vb_default_reference_path();
+	if (path) {
+		vb_load_reference(op->visual_baseline, path);
+		g_free(path);
+	}
+}
+
 typedef struct {
 	struct output_panel *op;
-	int dF;
-	int dA;
-} batch_apply_done_t;
+	char *text;
+} camera_status_idle_t;
 
-static gboolean batch_apply_done_idle(gpointer data) {
-	batch_apply_done_t *bd = (batch_apply_done_t *)data;
-	refresh_pos_coord_labels(bd->op);
-	update_micro_motor_readout_label_ui(bd->op);
-	char buf[256];
-	snprintf(buf, sizeof(buf), _("6자세 목표 좌표에 반영했습니다.\nFace Δ%+d, Arm Δ%+d"), bd->dF, bd->dA);
-	GtkWidget *win = gtk_widget_get_toplevel(bd->op->panel);
-	if (!GTK_IS_WINDOW(win)) win = NULL;
-	GtkWidget *dlg = gtk_message_dialog_new(GTK_WINDOW(win), GTK_DIALOG_MODAL, GTK_MESSAGE_INFO, GTK_BUTTONS_OK, "%s", buf);
-	gtk_window_set_title(GTK_WINDOW(dlg), _("기준점 일괄적용"));
-	if (win) gtk_window_set_transient_for(GTK_WINDOW(dlg), GTK_WINDOW(win));
-	gtk_dialog_run(GTK_DIALOG(dlg));
-	gtk_widget_destroy(dlg);
-	g_free(bd);
-	return G_SOURCE_REMOVE;
-}
-
-static gboolean batch_apply_err_baseline_idle(gpointer data) {
-	struct output_panel *op = (struct output_panel *)data;
-	GtkWidget *win = gtk_widget_get_toplevel(op->panel);
-	if (!GTK_IS_WINDOW(win)) win = NULL;
-	GtkWidget *dlg = gtk_message_dialog_new(GTK_WINDOW(win), GTK_DIALOG_MODAL, GTK_MESSAGE_ERROR, GTK_BUTTONS_OK,
-		"%s", _("미세조정 기준이 없습니다. 서보 연결 후 Face/Arm ±로 조정한 다음 다시 누르세요."));
-	gtk_window_set_title(GTK_WINDOW(dlg), _("기준점 일괄적용"));
-	if (win) gtk_window_set_transient_for(GTK_WINDOW(dlg), GTK_WINDOW(win));
-	gtk_dialog_run(GTK_DIALOG(dlg));
-	gtk_widget_destroy(dlg);
-	return G_SOURCE_REMOVE;
-}
-
-static gboolean batch_apply_noop_idle(gpointer data) {
-	struct output_panel *op = (struct output_panel *)data;
-	GtkWidget *win = gtk_widget_get_toplevel(op->panel);
-	if (!GTK_IS_WINDOW(win)) win = NULL;
-	GtkWidget *dlg = gtk_message_dialog_new(GTK_WINDOW(win), GTK_DIALOG_MODAL, GTK_MESSAGE_INFO, GTK_BUTTONS_OK,
-		"%s", _("적용할 미세조정 변화가 없습니다. Face/Arm ±로 먼저 조정하세요."));
-	gtk_window_set_title(GTK_WINDOW(dlg), _("기준점 일괄적용"));
-	if (win) gtk_window_set_transient_for(GTK_WINDOW(dlg), GTK_WINDOW(win));
-	gtk_dialog_run(GTK_DIALOG(dlg));
-	gtk_widget_destroy(dlg);
-	return G_SOURCE_REMOVE;
-}
-
-typedef struct { struct output_panel *op; } batch_apply_param_t;
-
-static gpointer batch_apply_thread(gpointer data) {
-	batch_apply_param_t *p = (batch_apply_param_t *)data;
-	struct output_panel *op = p->op;
+static gboolean camera_set_status_idle(gpointer data)
+{
+	camera_status_idle_t *p = (camera_status_idle_t *)data;
+	if (s_camera_overlay_status && GTK_IS_LABEL(s_camera_overlay_status) && p->text)
+		gtk_label_set_text(GTK_LABEL(s_camera_overlay_status), p->text);
+	g_free(p->text);
 	g_free(p);
-	if (!micro_adj_base_valid) {
-		g_idle_add(batch_apply_err_baseline_idle, op);
-		return NULL;
+	return G_SOURCE_REMOVE;
+}
+
+static void camera_set_status_ui(struct output_panel *op, const char *text)
+{
+	(void)op;
+	if (!text)
+		return;
+	camera_status_idle_t *p = g_new0(camera_status_idle_t, 1);
+	p->op = op;
+	p->text = g_strdup(text);
+	g_idle_add(camera_set_status_idle, p);
+}
+
+static void on_camera_overlay_response(GtkDialog *dlg, gint response_id, gpointer user_data)
+{
+	(void)dlg;
+	(void)response_id;
+	if (user_data)
+		on_camera_auto_cancel_clicked(NULL, user_data);
+}
+
+static void on_camera_overlay_parent_destroy(GtkWidget *parent, gpointer user_data)
+{
+	(void)parent;
+	GtkWidget *dlg = (GtkWidget *)user_data;
+	if (dlg && GTK_IS_WIDGET(dlg))
+		gtk_widget_destroy(dlg);
+}
+
+static void on_camera_overlay_destroy(GtkWidget *w, gpointer user_data)
+{
+	(void)w;
+	(void)user_data;
+	s_camera_overlay_window = NULL;
+	s_camera_overlay_image = NULL;
+	s_camera_overlay_status = NULL;
+	s_camera_overlay_op = NULL;
+}
+
+static void camera_overlay_close(void)
+{
+	if (s_camera_overlay_window && GTK_IS_WIDGET(s_camera_overlay_window))
+		gtk_widget_destroy(s_camera_overlay_window);
+	s_camera_overlay_window = NULL;
+	s_camera_overlay_image = NULL;
+	s_camera_overlay_status = NULL;
+	s_camera_overlay_op = NULL;
+}
+
+static gboolean idle_camera_overlay_position(gpointer data)
+{
+	GtkWindow *dlg = GTK_WINDOW(data);
+	GtkWindow *parent = g_object_get_data(G_OBJECT(dlg), CAM_OVERLAY_PARENT_KEY);
+	int dw, dh, px, py, pw_w, pw_h, x, y, margin;
+	GdkWindow *gdkw;
+
+	if (!parent)
+		return FALSE;
+	gdkw = gtk_widget_get_window(GTK_WIDGET(parent));
+	if (!gdkw)
+		return FALSE;
+	gtk_window_get_size(dlg, &dw, &dh);
+	margin = 8;
+
+	/* 9시 참고 창이 열려 있으면 그 오른쪽에 카메라 레이어 */
+	if (s_ref9_window && GTK_IS_WIDGET(s_ref9_window) && gtk_widget_get_visible(s_ref9_window)) {
+		GdkWindow *gdkr = gtk_widget_get_window(s_ref9_window);
+		if (gdkr) {
+			int rx, ry, rw, rh;
+			gdk_window_get_origin(gdkr, &rx, &ry);
+			rw = gdk_window_get_width(gdkr);
+			rh = gdk_window_get_height(gdkr);
+			x = rx + rw + margin;
+			y = ry + (rh - dh) / 2;
+			gtk_window_move(dlg, x, y);
+			return FALSE;
+		}
 	}
-	/* 일괄적용 기준은 항상 UI에 보이는 미세조정 좌표를 사용한다.
-	 * (last_pos는 raw/논리틱이 섞일 수 있어 9시 저장값이 틀어질 수 있음) */
-	int curF = micro_adj_base_face;
-	int curA = micro_adj_base_arm;
-	int dF = tick_delta_signed(face_positions[BASE_SLOT_INDEX], curF);
-	int dA = tick_delta_signed(arm_positions[BASE_SLOT_INDEX], curA);
-	if (dF == 0 && dA == 0) {
-		g_idle_add(batch_apply_noop_idle, op);
-		return NULL;
+
+	gdk_window_get_origin(gdkw, &px, &py);
+	pw_w = gdk_window_get_width(gdkw);
+	pw_h = gdk_window_get_height(gdkw);
+	x = px + pw_w + margin;
+	y = py + (pw_h - dh) / 2;
+#if GTK_CHECK_VERSION(3, 22, 0)
+	{
+		GdkDisplay *dpy = gtk_widget_get_display(GTK_WIDGET(dlg));
+		GdkMonitor *mon = gdk_display_get_monitor_at_window(dpy, gdkw);
+		GdkRectangle work;
+
+		gdk_monitor_get_workarea(mon, &work);
+		if (x + dw > work.x + work.width - margin)
+			x = px - dw - margin;
+		if (x < work.x + margin)
+			x = work.x + margin;
+		if (y + dh > work.y + work.height - margin)
+			y = work.y + work.height - dh - margin;
+		if (y < work.y + margin)
+			y = work.y + margin;
 	}
-	/* 기준점 적용: 현재 미세조정 값을 ch 기준점으로 고정 */
+#endif
+	gtk_window_move(dlg, x, y);
+	return FALSE;
+}
+
+static void show_camera_baseline_overlay(struct output_panel *op)
+{
+	GtkWindow *parent = NULL;
+
+	if (!op)
+		return;
+	if (op->panel && gtk_widget_get_toplevel(op->panel))
+		parent = GTK_WINDOW(gtk_widget_get_toplevel(op->panel));
+
+	if (s_camera_overlay_window && GTK_IS_WIDGET(s_camera_overlay_window)) {
+		s_camera_overlay_op = op;
+		g_object_set_data(G_OBJECT(s_camera_overlay_window), CAM_OVERLAY_PARENT_KEY, parent);
+		gtk_window_present(GTK_WINDOW(s_camera_overlay_window));
+		g_idle_add(idle_camera_overlay_position, s_camera_overlay_window);
+		return;
+	}
+
+	GtkWidget *dlg = gtk_dialog_new_with_buttons(
+		_("CH 카메라 자동 기준점"),
+		NULL,
+		(GtkDialogFlags)0,
+		_("취소"), GTK_RESPONSE_CANCEL,
+		NULL);
+	gtk_window_set_modal(GTK_WINDOW(dlg), FALSE);
+	gtk_window_set_position(GTK_WINDOW(dlg), GTK_WIN_POS_NONE);
+	gtk_window_set_type_hint(GTK_WINDOW(dlg), GDK_WINDOW_TYPE_HINT_NORMAL);
+	gtk_window_set_focus_on_map(GTK_WINDOW(dlg), FALSE);
+	gtk_window_set_keep_above(GTK_WINDOW(dlg), FALSE);
+	gtk_window_set_resizable(GTK_WINDOW(dlg), FALSE);
+	gtk_window_set_default_size(GTK_WINDOW(dlg), 460, 480);
+	gtk_widget_set_size_request(GTK_WIDGET(dlg), 460, 480);
+	gtk_window_resize(GTK_WINDOW(dlg), 460, 480);
+	g_object_set_data(G_OBJECT(dlg), CAM_OVERLAY_PARENT_KEY, parent);
+	s_camera_overlay_window = dlg;
+	s_camera_overlay_op = op;
+	g_signal_connect(dlg, "response", G_CALLBACK(on_camera_overlay_response), op);
+	g_signal_connect(dlg, "destroy", G_CALLBACK(on_camera_overlay_destroy), op);
+	if (parent && GTK_IS_WIDGET(parent))
+		g_signal_connect(parent, "destroy", G_CALLBACK(on_camera_overlay_parent_destroy), dlg);
+
+	{
+		GtkCssProvider *css = gtk_css_provider_new();
+		gtk_css_provider_load_from_data(css,
+			"#cam-overlay-dialog { background-color: #ffffff; }\n"
+			"#cam-overlay-preview { background-color: #111111; padding: 4px; }\n",
+			-1, NULL);
+		gtk_style_context_add_provider(gtk_widget_get_style_context(dlg),
+			GTK_STYLE_PROVIDER(css), GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
+		g_object_unref(css);
+		gtk_widget_set_name(dlg, "cam-overlay-dialog");
+	}
+
+	GtkWidget *content = gtk_dialog_get_content_area(GTK_DIALOG(dlg));
+	GtkWidget *vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
+	gtk_container_set_border_width(GTK_CONTAINER(vbox), 12);
+	gtk_box_pack_start(GTK_BOX(content), vbox, FALSE, FALSE, 0);
+
+	GtkWidget *wrap = gtk_event_box_new();
+	gtk_widget_set_name(wrap, "cam-overlay-preview");
+	s_camera_overlay_image = gtk_image_new();
+	gtk_widget_set_size_request(s_camera_overlay_image, 512, 384);
+	gtk_widget_set_halign(s_camera_overlay_image, GTK_ALIGN_CENTER);
+	gtk_container_add(GTK_CONTAINER(wrap), s_camera_overlay_image);
+	gtk_box_pack_start(GTK_BOX(vbox), wrap, FALSE, FALSE, 0);
+
+	s_camera_overlay_status = gtk_label_new(
+		_("카메라 연결 중… 자동으로 CH 자세·기준점을 맞춥니다."));
+	gtk_label_set_line_wrap(GTK_LABEL(s_camera_overlay_status), TRUE);
+	gtk_widget_set_halign(s_camera_overlay_status, GTK_ALIGN_CENTER);
+	gtk_style_context_add_class(gtk_widget_get_style_context(s_camera_overlay_status), "pos-value");
+	gtk_box_pack_start(GTK_BOX(vbox), s_camera_overlay_status, FALSE, FALSE, 0);
+
+	GtkWidget *hint = gtk_label_new(
+		_("CH 판정: 녹색 박스 안에 빨간 LED 램프가 보이면 기준점 일치.\n"
+		  "Face/Arm ± 로 LED가 박스 안에 오도록 맞추세요."));
+	gtk_label_set_line_wrap(GTK_LABEL(hint), TRUE);
+	gtk_widget_set_halign(hint, GTK_ALIGN_CENTER);
+	gtk_box_pack_start(GTK_BOX(vbox), hint, FALSE, FALSE, 0);
+
+	gtk_widget_show_all(dlg);
+	g_idle_add(idle_camera_overlay_position, dlg);
+}
+
+static gboolean camera_preview_start_idle(gpointer data)
+{
+	struct output_panel *op = (struct output_panel *)data;
+	if (!op)
+		return G_SOURCE_REMOVE;
+	camera_preview_start(op);
+	return G_SOURCE_REMOVE;
+}
+
+static void camera_preview_start_async(struct output_panel *op)
+{
+	if (!op)
+		return;
+	g_idle_add(camera_preview_start_idle, op);
+}
+
+static gboolean camera_bootstrap_idle(gpointer data)
+{
+	struct output_panel *op = (struct output_panel *)data;
+	if (!op)
+		return G_SOURCE_REMOVE;
+	if (!op->visual_baseline)
+		op->visual_baseline = vb_create();
+	vb_load_reference_if_exists(op);
+	return G_SOURCE_REMOVE;
+}
+
+static void camera_preview_stop(struct output_panel *op)
+{
+	if (!op)
+		return;
+	if (op->camera_preview_timer != 0) {
+		g_source_remove(op->camera_preview_timer);
+		op->camera_preview_timer = 0;
+	}
+}
+
+static gboolean camera_preview_tick(gpointer data)
+{
+	struct output_panel *op = (struct output_panel *)data;
+	if (!op || !op->visual_baseline)
+		return G_SOURCE_REMOVE;
+	if (vb_grab_preview(op->visual_baseline)) {
+		GdkPixbuf *pb = vb_copy_preview_pixbuf(op->visual_baseline);
+		if (pb && s_camera_overlay_image && GTK_IS_IMAGE(s_camera_overlay_image)) {
+			gtk_image_set_from_pixbuf(GTK_IMAGE(s_camera_overlay_image), pb);
+			g_object_unref(pb);
+		} else if (pb) {
+			g_object_unref(pb);
+		}
+		if (op->camera_auto_active) {
+			double score = 0.0;
+			char buf[192];
+			if (vb_has_reference(op->visual_baseline)
+			    && vb_score_last_frame(op->visual_baseline, &score)) {
+				snprintf(buf, sizeof(buf),
+					_("자동 기준점… LED %s (목표: 감지됨)"),
+					score >= VB_MATCH_OK_THRESHOLD ? _("감지") : _("없음"));
+			} else {
+				snprintf(buf, sizeof(buf), "%s",
+					_("자동 기준점… CH 자세로 이동·기준 화면 준비 중"));
+			}
+			camera_set_status_ui(op, buf);
+		}
+	}
+	return op->camera_preview_timer ? G_SOURCE_CONTINUE : G_SOURCE_REMOVE;
+}
+
+static void camera_preview_show_device_status(struct output_panel *op)
+{
+	int cam_idx;
+	char buf[192];
+
+	if (!op || !op->visual_baseline || !vb_has_camera(op->visual_baseline))
+		return;
+	cam_idx = vb_get_camera_device_index(op->visual_baseline);
+	snprintf(buf, sizeof(buf), _("USB 카메라 #%d 사용 중 (Command → 카메라 선택)"), cam_idx);
+	camera_set_status_ui(op, buf);
+}
+
+static int output_panel_open_camera_saved_or_auto(struct output_panel *op)
+{
+	int saved;
+
+	output_panel_ensure_visual_baseline(op);
+	vb_close_camera(op->visual_baseline);
+	saved = vb_get_saved_camera_index();
+	if (saved >= VB_CAMERA_PROBE_MIN_INDEX && saved <= VB_CAMERA_PROBE_MAX_INDEX)
+		return vb_open_camera(op->visual_baseline, saved);
+	return vb_open_camera_auto(op->visual_baseline);
+}
+
+void output_panel_select_camera(struct output_panel *op, int device_index)
+{
+	GtkWidget *win;
+	char msg[256];
+	int opened = 0;
+
+	if (!op)
+		return;
+	if (device_index >= 0
+	    && (device_index < VB_CAMERA_PROBE_MIN_INDEX
+		|| device_index > VB_CAMERA_PROBE_MAX_INDEX))
+		return;
+
+	output_panel_ensure_visual_baseline(op);
+	camera_preview_stop(op);
+	vb_close_camera(op->visual_baseline);
+
+	if (device_index >= VB_CAMERA_PROBE_MIN_INDEX
+	    && device_index <= VB_CAMERA_PROBE_MAX_INDEX) {
+		vb_save_camera_index_to_conf(device_index);
+		opened = vb_open_camera(op->visual_baseline, device_index);
+		snprintf(msg, sizeof(msg),
+			opened ? _("USB 카메라 #%d 로 전환했습니다.") : _("USB 카메라 #%d 를 열지 못했습니다."),
+			device_index);
+	} else {
+		vb_save_camera_index_to_conf(VB_CAMERA_INDEX_AUTO);
+		opened = vb_open_camera_auto(op->visual_baseline);
+		snprintf(msg, sizeof(msg),
+			opened ? _("자동: USB 카메라 #%d 를 사용합니다.")
+			       : _("USB 카메라를 찾지 못했습니다. USB 연결·다른 앱 종료 후 Command → 카메라 선택."),
+			opened ? vb_get_camera_device_index(op->visual_baseline) : 0);
+	}
+
+	camera_set_status_ui(op, msg);
+	if (opened) {
+		op->camera_preview_timer = g_timeout_add(200, camera_preview_tick, op);
+		camera_preview_tick(op);
+	}
+
+	win = op->panel ? gtk_widget_get_toplevel(op->panel) : NULL;
+	if (!GTK_IS_WINDOW(win))
+		win = NULL;
+	{
+		GtkWidget *dlg = gtk_message_dialog_new(GTK_WINDOW(win),
+			GTK_DIALOG_MODAL,
+			opened ? GTK_MESSAGE_INFO : GTK_MESSAGE_WARNING,
+			GTK_BUTTONS_OK, "%s", msg);
+		gtk_window_set_title(GTK_WINDOW(dlg), _("카메라 선택"));
+		if (win)
+			gtk_window_set_transient_for(GTK_WINDOW(dlg), GTK_WINDOW(win));
+		gtk_dialog_run(GTK_DIALOG(dlg));
+		gtk_widget_destroy(dlg);
+	}
+}
+
+static void on_camera_menu_select(GtkMenuItem *item, gpointer data)
+{
+	struct output_panel *op = (struct output_panel *)data;
+	int idx = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(item), "cam_device"));
+	output_panel_select_camera(op, idx);
+}
+
+void output_panel_append_camera_menu(GtkWidget *submenu, struct output_panel *op)
+{
+	int indices[VB_CAMERA_PROBE_MAX_INDEX + 1];
+	int cnt;
+	int saved;
+	GSList *group = NULL;
+	GtkWidget *auto_item;
+
+	if (!submenu || !op)
+		return;
+
+	cnt = vb_probe_usb_cameras(indices, VB_CAMERA_PROBE_MAX_INDEX + 1);
+	saved = vb_get_saved_camera_index();
+
+	auto_item = gtk_radio_menu_item_new_with_label(group, _("자동 (첫 USB)"));
+	group = gtk_radio_menu_item_get_group(GTK_RADIO_MENU_ITEM(auto_item));
+	g_object_set_data(G_OBJECT(auto_item), "cam_device",
+		GINT_TO_POINTER(VB_CAMERA_INDEX_AUTO));
+	g_signal_connect(auto_item, "activate", G_CALLBACK(on_camera_menu_select), op);
+	if (saved < VB_CAMERA_PROBE_MIN_INDEX)
+	{
+		/* 초기 체크표시 세팅은 콜백을 태우지 않는다 (앱 시작 시 '카메라 선택' 팝업 방지) */
+		g_signal_handlers_block_by_func(auto_item, (gpointer)on_camera_menu_select, op);
+		gtk_check_menu_item_set_active(GTK_CHECK_MENU_ITEM(auto_item), TRUE);
+		g_signal_handlers_unblock_by_func(auto_item, (gpointer)on_camera_menu_select, op);
+	}
+	gtk_menu_shell_append(GTK_MENU_SHELL(submenu), auto_item);
+
+	for (int i = 0; i < cnt; i++) {
+		char label[96];
+		GtkWidget *mi;
+
+		snprintf(label, sizeof(label), "[USB] %s #%d", _("카메라"), indices[i]);
+		mi = gtk_radio_menu_item_new_with_label(group, label);
+		group = gtk_radio_menu_item_get_group(GTK_RADIO_MENU_ITEM(mi));
+		g_object_set_data(G_OBJECT(mi), "cam_device", GINT_TO_POINTER(indices[i]));
+		g_signal_connect(mi, "activate", G_CALLBACK(on_camera_menu_select), op);
+		if (saved == indices[i])
+		{
+			/* 초기 체크표시 세팅은 콜백을 태우지 않는다 (앱 시작 시 '카메라 선택' 팝업 방지) */
+			g_signal_handlers_block_by_func(mi, (gpointer)on_camera_menu_select, op);
+			gtk_check_menu_item_set_active(GTK_CHECK_MENU_ITEM(mi), TRUE);
+			g_signal_handlers_unblock_by_func(mi, (gpointer)on_camera_menu_select, op);
+		}
+		gtk_menu_shell_append(GTK_MENU_SHELL(submenu), mi);
+	}
+
+	if (cnt == 0) {
+		GtkWidget *none = gtk_menu_item_new_with_label(
+			_("USB 카메라 없음 — USB 연결 후 메뉴를 다시 열거나 앱을 다시 시작하세요"));
+		gtk_widget_set_sensitive(none, FALSE);
+		gtk_menu_shell_append(GTK_MENU_SHELL(submenu), none);
+	}
+}
+
+static void camera_preview_start(struct output_panel *op)
+{
+	if (!op)
+		return;
+	camera_preview_stop(op);
+	if (!output_panel_open_camera_saved_or_auto(op)) {
+		camera_set_status_ui(op,
+			_("USB 카메라를 열지 못했습니다.\n"
+			  "USB 연결·다른 앱(카메라 사용) 종료 후 Command → 카메라 선택."));
+		return;
+	}
+	camera_preview_show_device_status(op);
+	op->camera_preview_timer = g_timeout_add(200, camera_preview_tick, op);
+	camera_preview_tick(op);
+}
+
+typedef struct {
+	struct output_panel *op;
+	int continue_auto_measure;
+} vb_auto_param_t;
+
+typedef struct {
+	struct output_panel *op;
+	int success;
+	int continue_auto_measure;
+} vb_auto_finish_param_t;
+
+static gboolean vb_auto_finish_idle(gpointer data);
+
+/** CH 이동 후 ROI 안 빨간 LED 감지 여부 */
+static int vb_ch_match_confirmed(VisualBaseline *vb, double *score_out)
+{
+	double score = 0.0;
+	if (!vb || !vb_has_reference(vb))
+		return 0;
+	if (!vb_grab_and_score(vb, &score))
+		return 0;
+	if (score_out)
+		*score_out = score;
+	return (score >= VB_MATCH_OK_THRESHOLD) ? 1 : 0;
+}
+
+static gboolean camera_frame_push_idle(gpointer data)
+{
+	struct output_panel *op = (struct output_panel *)data;
+	if (!op || !op->visual_baseline)
+		return G_SOURCE_REMOVE;
+	GdkPixbuf *pb = vb_copy_preview_pixbuf(op->visual_baseline);
+	if (pb && s_camera_overlay_image && GTK_IS_IMAGE(s_camera_overlay_image)) {
+		gtk_image_set_from_pixbuf(GTK_IMAGE(s_camera_overlay_image), pb);
+		g_object_unref(pb);
+	} else if (pb) {
+		g_object_unref(pb);
+	}
+	return G_SOURCE_REMOVE;
+}
+
+static int vb_wait_stable_ch_match_ex(VisualBaseline *vb, struct output_panel *op,
+	int max_frames, int stable_required)
+{
+	int stable = 0;
+	int frame = 0;
+
+	if (!vb || !op || !vb_has_reference(vb))
+		return 0;
+	if (stable_required < 1)
+		stable_required = 1;
+
+	while (!op->camera_auto_cancel && !op->winder_active && frame < max_frames) {
+		double score = 0.0;
+		if (vb_grab_and_score(vb, &score)) {
+			if ((frame % 5) == 0)
+				g_idle_add(camera_frame_push_idle, op);
+			if (score >= VB_MATCH_OK_THRESHOLD)
+				stable++;
+			else
+				stable = 0;
+			if (stable >= stable_required)
+				return 1;
+		}
+		frame++;
+		g_usleep(200000);
+	}
+	return 0;
+}
+
+static int vb_wait_stable_ch_match(VisualBaseline *vb, struct output_panel *op, int max_frames)
+{
+	return vb_wait_stable_ch_match_ex(vb, op, max_frames, VB_STABLE_FRAMES);
+}
+
+/** Face/Arm ± 와 동일한 논리 틱으로 천천히 이동 (자동 기준점 탐색용) */
+static void vb_move_to_logical_pose(int face_log, int arm_log)
+{
+	int p1 = clamp_face_hard(norm4096_pc(face_log));
+	int p2 = clamp_arm_hard(norm4096_pc(arm_log));
+	int d1 = calc_duration(last_pos1, p1);
+	int d2 = calc_duration(last_pos2, p2);
+
+	if (d1 > VB_SEARCH_SETTLE_MS)
+		d1 = VB_SEARCH_SETTLE_MS;
+	if (d2 > VB_SEARCH_SETTLE_MS)
+		d2 = VB_SEARCH_SETTLE_MS;
+	if (d1 < 400)
+		d1 = 400;
+	if (d2 < 400)
+		d2 = 400;
+
+	motor_write_byte(1, 0x28, 1);
+	motor_write_word(1, 48, MICRO_ADJ_TORQUE_LIMIT);
+	motor_write_byte(2, 0x28, 1);
+	motor_write_word(2, 48, MICRO_ADJ_TORQUE_LIMIT);
+	motor_move(1, p1, d1, 0);
+	g_usleep(90000);
+	motor_move(2, p2, d2, 0);
+	{
+		int wait_ms = (d2 > d1 ? d2 : d1) + 400;
+		g_usleep((guint)wait_ms * 1000);
+	}
+	last_pos1 = p1;
+	last_pos2 = p2;
+}
+
+static int vb_try_ch_match_at_pose(struct output_panel *op, VisualBaseline *vb,
+	int face_log, int arm_log, int df_steps, int da_steps)
+{
+	char buf[192];
+	double score = 0.0;
+
+	if (!op || !vb || op->camera_auto_cancel)
+		return 0;
+
+	vb_move_to_logical_pose(face_log, arm_log);
+	g_usleep(300000);
+
+	if (vb_grab_and_score(vb, &score)) {
+		snprintf(buf, sizeof(buf),
+			_("CH 탐색… Face %+d·Arm %+d (LED %s)"),
+			df_steps * MICRO_STEP_FACE, da_steps * MICRO_STEP_ARM,
+			score >= VB_MATCH_OK_THRESHOLD ? _("감지") : _("없음"));
+		camera_set_status_ui(op, buf);
+		g_idle_add(camera_frame_push_idle, op);
+	}
+
+	return vb_wait_stable_ch_match_ex(vb, op, VB_SEARCH_FRAMES_PER_TRY,
+		VB_SEARCH_STABLE_FRAMES)
+		&& vb_ch_match_confirmed(vb, NULL);
+}
+
+/** CH 목표에서 Face/Arm ± 스텝으로 시야 안의 기준 화면을 찾음 */
+static int vb_search_ch_pose_by_micro_steps(struct output_panel *op, VisualBaseline *vb)
+{
+	int chF, chA;
+	int maxF = VB_SEARCH_FACE_STEPS_EACH_SIDE;
+	int maxA = VB_SEARCH_ARM_STEPS_EACH_SIDE;
+	int mag, si, round;
+
+	if (!op || !vb)
+		return 0;
+
+	baseline_ch_targets_logical(&chF, &chA);
+	camera_set_status_ui(op, _("녹색 박스 안에 빨간 LED가 안 보입니다. 자동 탐색을 반복합니다…"));
+
+	/* 실패 후 가만히 멈춘 것처럼 보이지 않도록 탐색 패턴을 여러 라운드 반복 */
+	for (round = 0; round < 3 && !op->camera_auto_cancel; round++) {
+		char st[160];
+		snprintf(st, sizeof(st), _("CH 자동 탐색 %d/3 라운드…"), round + 1);
+		camera_set_status_ui(op, st);
+
+		/* 라운드 시작점마다 CH 중심 재확인 */
+		if (vb_try_ch_match_at_pose(op, vb, chF, chA, 0, 0))
+			return 1;
+
+		/* 1) CH 목표에서 Face만 ± (카메라가 한쪽으로 치우친 경우) */
+		for (mag = 1; mag <= maxF && !op->camera_auto_cancel; mag++) {
+			for (si = 0; si < 2; si++) {
+				int df = mag * ((si == 0) ? 1 : -1);
+				int f = norm4096_pc(chF + df * MICRO_STEP_FACE);
+				if (vb_try_ch_match_at_pose(op, vb, f, chA, df, 0))
+					return 1;
+			}
+		}
+
+		/* 2) Face는 CH, Arm만 ± */
+		for (mag = 1; mag <= maxA && !op->camera_auto_cancel; mag++) {
+			for (si = 0; si < 2; si++) {
+				int da = mag * ((si == 0) ? 1 : -1);
+				int a = norm4096_pc(chA + da * MICRO_STEP_ARM);
+				if (vb_try_ch_match_at_pose(op, vb, chF, a, 0, da))
+					return 1;
+			}
+		}
+
+		/* 3) Face·Arm 동시 소폭 조합 (대각 시야) */
+		for (mag = 1; mag <= 6 && !op->camera_auto_cancel; mag++) {
+			for (si = 0; si < 2; si++) {
+				int df = mag * ((si == 0) ? 1 : -1);
+				int da = mag * ((si == 0) ? 1 : -1);
+				int f = norm4096_pc(chF + df * MICRO_STEP_FACE);
+				int a = norm4096_pc(chA + da * MICRO_STEP_ARM);
+				if (vb_try_ch_match_at_pose(op, vb, f, a, df, da))
+					return 1;
+				a = norm4096_pc(chA - da * MICRO_STEP_ARM);
+				if (vb_try_ch_match_at_pose(op, vb, f, a, df, -da))
+					return 1;
+			}
+		}
+
+		/* 라운드 사이 짧은 쉬기 */
+		g_usleep(250000);
+	}
+
+	return 0;
+}
+
+static void vb_move_to_ch_pose(void)
+{
+	int p1 = clamp_face(face_positions[BASE_SLOT_INDEX]);
+	int p2 = clamp_arm(arm_positions[BASE_SLOT_INDEX]);
+	int d1 = calc_duration(last_pos1, p1);
+	int d2 = calc_duration(last_pos2, p2);
+	motor_move(1, p1, d1, 0);
+	g_usleep(100000);
+	motor_move(2, p2, d2, 0);
+	g_usleep((guint)((d2 > d1 ? d2 : d1) + 500) * 1000);
+	last_pos1 = p1;
+	last_pos2 = p2;
+}
+
+static int vb_apply_baseline_from_present(struct output_panel *op)
+{
+	int r1, r2, curF, curA, dF, dA;
+
+	if (!op)
+		return 0;
+	if (!motor_init(motor_get_port()))
+		return 0;
+	motor_ensure_torque_on();
+	g_usleep(200000);
+	r1 = motor_read_present_position(1);
+	r2 = motor_read_present_position(2);
+	motor_disable_torque_all();
+	motor_close();
+	if (r1 < 0 || r2 < 0)
+		return 0;
+	micro_adj_refresh_from_present_reads(r1, r2, op);
+	if (!micro_adj_base_valid)
+		return 0;
+	{
+		int vdF, vdA;
+		int chF, chA;
+		motor_get_visual_goal_deltas(&vdF, &vdA);
+		curF = micro_adj_base_face;
+		curA = micro_adj_base_arm;
+		baseline_ch_targets_logical(&chF, &chA);
+		dF = tick_delta_signed(chF, curF);
+		dA = tick_delta_signed(chA, curA);
+		face_positions[BASE_SLOT_INDEX] = clamp_face_hard(norm4096_pc(curF));
+		arm_positions[BASE_SLOT_INDEX] = clamp_arm_hard(norm4096_pc(curA));
+		rebuild_fixed_positions_from_base();
+		save_coords_to_file();
+		last_pos1 = face_positions[BASE_SLOT_INDEX];
+		last_pos2 = arm_positions[BASE_SLOT_INDEX];
+	}
+	{
+		char buf[160];
+		snprintf(buf, sizeof(buf),
+			_("카메라 기준점 완료. Face Δ%+d, Arm Δ%+d"), dF, dA);
+		camera_set_status_ui(op, buf);
+	}
+	return 1;
+}
+
+static gpointer vb_auto_baseline_thread(gpointer data)
+{
+	vb_auto_param_t *p = (vb_auto_param_t *)data;
+	struct output_panel *op = p->op;
+	int continue_auto = p->continue_auto_measure;
+	g_free(p);
+
+	int success = 0;
+
+	if (!op || !op->visual_baseline)
+		goto done;
+	if (op->winder_active)
+		goto done;
+
+	if (!vb_has_camera(op->visual_baseline)) {
+		camera_set_status_ui(op, _("USB 카메라를 찾는 중…"));
+		if (!vb_open_camera_auto(op->visual_baseline)) {
+			camera_set_status_ui(op,
+				_("USB 카메라를 열지 못했습니다. Command → 카메라 선택 (USB 우선)."));
+			goto done;
+		}
+		for (int warm = 0; warm < 15; warm++) {
+			if (vb_grab_preview(op->visual_baseline))
+				break;
+			g_usleep(100000);
+		}
+	}
+
+	/* 기준 사진 없음: CH 이동 → 화면 저장 → Present 로 틱 반영 */
+	if (!vb_has_reference(op->visual_baseline)) {
+		camera_set_status_ui(op, _("기준 사진 없음 — CH로 이동 후 화면·틱을 저장합니다."));
+		if (!motor_init(motor_get_port())) {
+			camera_set_status_ui(op, _("서보 연결 실패. USB를 확인하세요."));
+			goto done;
+		}
+		motor_ensure_torque_on_for_position_move();
+		vb_move_to_ch_pose();
+		motor_disable_torque_all();
+		motor_close();
+		g_usleep(400000);
+		{
+			gchar *refpath = vb_reference_path_alloc();
+			if (refpath && vb_save_reference_snapshot(op->visual_baseline, refpath)) {
+				vb_load_reference(op->visual_baseline, refpath);
+				camera_set_status_ui(op, _("CH 기준 화면을 저장했습니다. 틱을 반영합니다."));
+			} else {
+				camera_set_status_ui(op, _("기준 화면 저장 실패. 조명·카메라를 확인하세요."));
+				g_free(refpath);
+				goto done;
+			}
+			g_free(refpath);
+		}
+		if (vb_apply_baseline_from_present(op)) {
+			success = 1;
+			op->camera_auto_continue_measure = continue_auto;
+		}
+		goto done;
+	}
+
+	/* 손으로 흔든 뒤 재실행 시: 현재 화면 생략 없이 CH로 이동한 뒤만 카메라 판정 */
+	camera_set_status_ui(op, _("CH 자세로 이동한 뒤 빨간 LED 램프를 확인합니다…"));
+	if (!motor_init(motor_get_port())) {
+		camera_set_status_ui(op, _("서보 연결 실패. USB를 확인하세요."));
+		goto done;
+	}
+	motor_ensure_torque_on_for_position_move();
+	vb_move_to_ch_pose();
+	g_usleep(400000);
+
+	if ((vb_wait_stable_ch_match(op->visual_baseline, op, 90)
+	     && vb_ch_match_confirmed(op->visual_baseline, NULL))
+	    || vb_search_ch_pose_by_micro_steps(op, op->visual_baseline)) {
+		if (vb_apply_baseline_from_present(op)) {
+			success = 1;
+			op->camera_auto_continue_measure = continue_auto;
+			camera_set_status_ui(op,
+				_("CH 기준점 확인: 빨간 LED가 감지되었습니다. 틱을 반영했습니다."));
+		}
+	} else {
+		camera_set_status_ui(op,
+			_("CH 자동 탐색해도 빨간 LED가 보이지 않습니다.\n"
+			  "Face/Arm ± 로 LED가 녹색 박스 안에 오도록 맞춘 뒤 [자동 기준점]을 다시 누르세요."));
+	}
+	motor_disable_torque_all();
+	motor_close();
+
+done:
+	op->camera_auto_active = 0;
+	if (!success)
+		op->camera_auto_continue_measure = 0;
+	g_idle_add(refresh_micro_motor_label_idle, op);
+	{
+		vb_auto_finish_param_t *fp = g_new0(vb_auto_finish_param_t, 1);
+		fp->op = op;
+		fp->success = success;
+		fp->continue_auto_measure = continue_auto;
+		g_idle_add(vb_auto_finish_idle, fp);
+	}
+	return NULL;
+}
+
+static gboolean vb_auto_finish_idle(gpointer data)
+{
+	vb_auto_finish_param_t *fp = (vb_auto_finish_param_t *)data;
+	struct output_panel *op = fp ? fp->op : NULL;
+	int ok = fp ? fp->success : 0;
+	int cont = fp ? fp->continue_auto_measure : 0;
+
+	if (fp)
+		g_free(fp);
+	if (!op)
+		return G_SOURCE_REMOVE;
+
+	refresh_pos_coord_labels(op);
+	update_micro_motor_readout_label_ui(op);
+
+	if (ok) {
+		camera_preview_stop(op);
+		camera_overlay_close();
+		camera_auto_block_for(45);
+		if (cont) {
+			/* 카메라 맞춤 직후에는 틱/카메라 재검사 없이 6자세 측정만 이어감 */
+			auto_measure_start_sequence(op, 1);
+		}
+	} else {
+		/* 실패: 팝업으로 멈추지 않고 오버레이 유지 + 자동 재탐색 */
+		if (op->camera_auto_cancel)
+			return G_SOURCE_REMOVE;
+		camera_auto_block_for(1);
+		if (!s_camera_overlay_window || !GTK_IS_WIDGET(s_camera_overlay_window))
+			show_camera_baseline_overlay(op);
+		camera_preview_start_async(op);
+		camera_set_status_ui(op,
+			_("CH를 아직 못 찾았습니다. 자동으로 다시 탐색합니다… (취소 가능)"));
+		if (s_camera_auto_defer_id == 0) {
+			s_camera_auto_defer_continue = cont;
+			s_camera_auto_defer_id = g_timeout_add(1200, camera_auto_defer_idle, op);
+		}
+	}
+	return G_SOURCE_REMOVE;
+}
+
+static gboolean camera_auto_defer_idle(gpointer data)
+{
+	struct output_panel *op = (struct output_panel *)data;
+	s_camera_auto_defer_id = 0;
+	if (!op)
+		return G_SOURCE_REMOVE;
+	if (camera_auto_is_blocked() || camera_auto_is_paused())
+		return G_SOURCE_REMOVE;
+	int cont = s_camera_auto_defer_continue;
+	visual_baseline_start_auto(op, cont);
+	return G_SOURCE_REMOVE;
+}
+
+static void output_panel_try_auto_camera_baseline(struct output_panel *op, int continue_auto_measure)
+{
+	if (!op || op->camera_auto_active)
+		return;
+	if (op->winder_active)
+		return;
+	if (camera_auto_is_blocked())
+		return;
+	if (camera_auto_is_paused())
+		return;
+	if (s_camera_overlay_window && GTK_IS_WIDGET(s_camera_overlay_window))
+		return;
+	if (s_camera_auto_defer_id != 0)
+		return;
+	s_camera_auto_defer_continue = continue_auto_measure;
+	s_camera_auto_defer_id = g_timeout_add(400, camera_auto_defer_idle, op);
+}
+
+static void visual_baseline_start_auto(struct output_panel *op, int continue_auto_measure)
+{
+	if (!op)
+		return;
+	if (op->camera_auto_active)
+		return;
+	if (camera_auto_is_paused())
+		return;
+	vb_load_reference_if_exists(op);
+	if (!op->visual_baseline)
+		op->visual_baseline = vb_create();
+
+	show_camera_baseline_overlay(op);
+	camera_preview_start_async(op);
+	camera_set_status_ui(op, _("카메라 자동 기준점 시작…"));
+
+	op->camera_auto_active = 1;
+	op->camera_auto_cancel = 0;
+	vb_auto_param_t *p = g_new(vb_auto_param_t, 1);
+	p->op = op;
+	p->continue_auto_measure = continue_auto_measure;
+	g_thread_new("vb_auto_ch", vb_auto_baseline_thread, p);
+}
+
+void on_camera_save_ref_clicked(GtkWidget *widget, gpointer data)
+{
+	(void)widget;
+	struct output_panel *op = (struct output_panel *)data;
+	if (!op)
+		return;
+	if (!op->visual_baseline)
+		op->visual_baseline = vb_create();
+
+	/* 저장 전에 카메라를 '동기적으로' 연다. 미리보기 async 는 아직 카메라를 안 열었을 수 있다. */
+	if (!vb_has_camera(op->visual_baseline)) {
+		if (!output_panel_open_camera_saved_or_auto(op)) {
+			camera_set_status_ui(op,
+				_("USB 카메라를 열지 못했습니다.\n"
+				  "USB 연결 후 Command → 카메라 선택 (USB만)."));
+			return;
+		}
+	}
+	/* 첫 프레임은 검을 수 있으므로 유효 프레임이 들어올 때까지 잠깐 워밍업 */
+	for (int warm = 0; warm < 10; warm++) {
+		if (vb_grab_preview(op->visual_baseline))
+			break;
+		g_usleep(50000);
+	}
+
+	gchar *path = vb_reference_path_alloc();
+	if (!path) {
+		camera_set_status_ui(op, _("기준 저장 경로를 만들 수 없습니다."));
+		return;
+	}
+	if (!vb_save_reference_snapshot(op->visual_baseline, path)) {
+		camera_set_status_ui(op, _("기준 저장 실패. 카메라 화면·조명을 확인하세요."));
+		g_free(path);
+		return;
+	}
+	vb_load_reference(op->visual_baseline, path);
+	g_free(path);
+	camera_set_status_ui(op, _("현재 화면을 CH 기준으로 저장했습니다. 이후 자동 기준점에 사용합니다."));
+	camera_preview_start_async(op);
+}
+
+void on_camera_auto_baseline_clicked(GtkWidget *widget, gpointer data)
+{
+	(void)widget;
+	s_camera_auto_pause_until_ms = 0;
+	s_camera_auto_block_until_ms = 0;
+	visual_baseline_start_auto((struct output_panel *)data, 0);
+}
+
+void on_camera_auto_cancel_clicked(GtkWidget *widget, gpointer data)
+{
+	(void)widget;
+	struct output_panel *op = (struct output_panel *)data;
+	if (!op)
+		return;
+	op->camera_auto_cancel = 1;
+	op->camera_auto_active = 0;
+	if (s_camera_auto_defer_id != 0) {
+		g_source_remove(s_camera_auto_defer_id);
+		s_camera_auto_defer_id = 0;
+	}
+	camera_preview_stop(op);
+	camera_overlay_close();
+	camera_auto_block_for(20);
+	s_camera_auto_pause_until_ms = camera_auto_now_ms() + 120000; /* 취소 후 2분 자동 재시작 금지 */
+	camera_set_status_ui(op, _("자동 기준점을 취소했습니다. Face/Arm ± 로 수동 조정할 수 있습니다."));
+}
+
+/** 1=적용됨, 0=변화 없음, -1=기준 없음 */
+static int batch_apply_ch_from_present(struct output_panel *op, int *out_dF, int *out_dA)
+{
+	int curF, curA, chF, chA, dF, dA;
+
+	if (!op || !micro_adj_base_valid)
+		return -1;
+	curF = micro_adj_base_face;
+	curA = micro_adj_base_arm;
+	baseline_ch_targets_logical(&chF, &chA);
+	dF = tick_delta_signed(chF, curF);
+	dA = tick_delta_signed(chA, curA);
+	if (dF == 0 && dA == 0)
+		return 0;
+	/* face_positions[] = motor_move()에 넣는 논리 틱 (내부에서 시각보정 더함) */
 	face_positions[BASE_SLOT_INDEX] = clamp_face_hard(norm4096_pc(curF));
 	arm_positions[BASE_SLOT_INDEX] = clamp_arm_hard(norm4096_pc(curA));
 	rebuild_fixed_positions_from_base();
 	save_coords_to_file();
 	last_pos1 = face_positions[BASE_SLOT_INDEX];
 	last_pos2 = arm_positions[BASE_SLOT_INDEX];
+	g_spin_face = last_pos1;
+	g_spin_arm = last_pos2;
 	micro_adj_base_face = curF;
 	micro_adj_base_arm = curA;
-	batch_apply_done_t *bd = g_new(batch_apply_done_t, 1);
-	bd->op = op;
-	bd->dF = dF;
-	bd->dA = dA;
-	g_idle_add(batch_apply_done_idle, bd);
-	return NULL;
+	if (out_dF)
+		*out_dF = dF;
+	if (out_dA)
+		*out_dA = dA;
+	return 1;
+}
+
+/* 기준점 일괄적용 시 현재 카메라 화면도 CH 기준으로 함께 저장 */
+static int save_camera_reference_on_batch_apply(struct output_panel *op)
+{
+	int created_vb = 0;
+	int opened_here = 0;
+	int ok = 0;
+	gchar *path = NULL;
+
+	if (!op)
+		return 0;
+	if (!op->visual_baseline) {
+		op->visual_baseline = vb_create();
+		created_vb = 1;
+	}
+	if (!op->visual_baseline)
+		return 0;
+	if (!vb_has_camera(op->visual_baseline)) {
+		if (!vb_open_camera_auto(op->visual_baseline))
+			goto done;
+		opened_here = 1;
+	}
+	path = vb_reference_path_alloc();
+	if (!path)
+		goto done;
+	if (!vb_save_reference_snapshot(op->visual_baseline, path))
+		goto done;
+	vb_load_reference(op->visual_baseline, path);
+	ok = 1;
+done:
+	if (path)
+		g_free(path);
+	if (opened_here)
+		vb_close_camera(op->visual_baseline);
+	if (!ok && created_vb && op->visual_baseline) {
+		vb_destroy(op->visual_baseline);
+		op->visual_baseline = NULL;
+	}
+	return ok;
 }
 
 void on_batch_apply_clicked(GtkWidget *widget, gpointer data) {
 	(void)widget;
 	struct output_panel *op = (struct output_panel *)data;
+	int dF, dA, rc;
+
+	if (!op)
+		return;
 
 	arm_release_live_poll_stop();
-	batch_apply_param_t *p = g_new(batch_apply_param_t, 1);
-	p->op = op;
-	g_thread_new("batch_apply", batch_apply_thread, p);
+
+	/* 일괄적용 직전 Present 재읽기 → CH 측정이 예전 좌표로 가는 것 방지 */
+	if (motor_init(motor_get_port())) {
+		motor_ensure_torque_on();
+		g_usleep(200000);
+		{
+			int r1 = motor_read_present_position(1);
+			int r2 = motor_read_present_position(2);
+			micro_adj_refresh_from_present_reads(r1, r2, op);
+		}
+		motor_disable_torque_all();
+		motor_close();
+	}
+
+	rc = batch_apply_ch_from_present(op, &dF, &dA);
+	refresh_pos_coord_labels(op);
+	update_micro_motor_readout_label_ui(op);
+
+	if (rc < 0) {
+		GtkWidget *win = gtk_widget_get_toplevel(op->panel);
+		if (!GTK_IS_WINDOW(win)) win = NULL;
+		GtkWidget *dlg = gtk_message_dialog_new(GTK_WINDOW(win), GTK_DIALOG_MODAL,
+			GTK_MESSAGE_ERROR, GTK_BUTTONS_OK,
+			"%s", _("미세조정 기준이 없습니다. 서보 연결 후 Face/Arm ±로 조정한 다음 다시 누르세요."));
+		gtk_window_set_title(GTK_WINDOW(dlg), _("기준점 일괄적용"));
+		if (win) gtk_window_set_transient_for(GTK_WINDOW(dlg), GTK_WINDOW(win));
+		gtk_dialog_run(GTK_DIALOG(dlg));
+		gtk_widget_destroy(dlg);
+		return;
+	}
+	if (rc == 0) {
+		GtkWidget *win = gtk_widget_get_toplevel(op->panel);
+		if (!GTK_IS_WINDOW(win)) win = NULL;
+		GtkWidget *dlg = gtk_message_dialog_new(GTK_WINDOW(win), GTK_DIALOG_MODAL,
+			GTK_MESSAGE_INFO, GTK_BUTTONS_OK,
+			"%s", _("적용할 미세조정 변화가 없습니다. Face/Arm ±로 먼저 조정하세요."));
+		gtk_window_set_title(GTK_WINDOW(dlg), _("기준점 일괄적용"));
+		if (win) gtk_window_set_transient_for(GTK_WINDOW(dlg), GTK_WINDOW(win));
+		gtk_dialog_run(GTK_DIALOG(dlg));
+		gtk_widget_destroy(dlg);
+		return;
+	}
+	{
+		char buf[320];
+		int cam_saved = save_camera_reference_on_batch_apply(op);
+		snprintf(buf, sizeof(buf),
+			_("6자세 목표 좌표에 반영했습니다.\nFace Δ%+d, Arm Δ%+d\n카메라 기준 화면: %s"),
+			dF, dA, cam_saved ? _("저장됨") : _("저장 실패(수동 저장 필요)"));
+		GtkWidget *win = gtk_widget_get_toplevel(op->panel);
+		if (!GTK_IS_WINDOW(win)) win = NULL;
+		GtkWidget *dlg = gtk_message_dialog_new(GTK_WINDOW(win), GTK_DIALOG_MODAL,
+			GTK_MESSAGE_INFO, GTK_BUTTONS_OK, "%s", buf);
+		gtk_window_set_title(GTK_WINDOW(dlg), _("기준점 일괄적용"));
+		if (win) gtk_window_set_transient_for(GTK_WINDOW(dlg), GTK_WINDOW(win));
+		gtk_dialog_run(GTK_DIALOG(dlg));
+		gtk_widget_destroy(dlg);
+	}
 }
 
 static gchar *reference_9oclock_image_path(void)
@@ -2929,6 +4170,13 @@ static void on_ref9_dialog_destroy(GtkWidget *w, gpointer user_data)
 {
 	(void)w;
 	(void)user_data;
+	s_ref9_window = NULL;
+}
+
+static void reference_9oclock_close(void)
+{
+	if (s_ref9_window && GTK_IS_WIDGET(s_ref9_window))
+		gtk_widget_destroy(s_ref9_window);
 	s_ref9_window = NULL;
 }
 
@@ -3298,6 +4546,22 @@ static gpointer auto_measure_finish_home_thread_func(gpointer data)
 	return NULL;
 }
 
+/* 자동측정 중 각 자세 저장 직전에 카메라 기준 이탈 여부 확인 */
+static int auto_measure_camera_mismatch_now(struct output_panel *op)
+{
+	double score = 0.0;
+
+	if (!op || !op->visual_baseline || !vb_has_reference(op->visual_baseline))
+		return 0; /* 기준 사진이 없으면 카메라 기준 검증 생략 */
+	if (!vb_has_camera(op->visual_baseline)) {
+		if (!vb_open_camera_auto(op->visual_baseline))
+			return 1;
+	}
+	if (!vb_grab_and_score(op->visual_baseline, &score))
+		return 1;
+	return (score < VB_MATCH_TRIGGER_LOW) ? 1 : 0;
+}
+
 static gboolean auto_measure_tick(gpointer data) {
 	struct output_panel *op = (struct output_panel *)data;
 	const int total = POS_FIXED_COUNT;
@@ -3318,6 +4582,15 @@ static gboolean auto_measure_tick(gpointer data) {
 	int idx = op->auto_measure_state - 1;
 	if (idx >= 0 && idx < total) {
 		int slot = g_pos_ui_order[idx];
+		/* CH 자세에서만 카메라 기준 확인 (9·12·3·6시는 당연히 화면이 다름) */
+		if (slot == BASE_SLOT_INDEX && auto_measure_camera_mismatch_now(op)) {
+			op->auto_measure_state = 0;
+			op->auto_measure_timer = 0;
+			set_manual_buttons_enabled(op, 1);
+			gtk_button_set_label(GTK_BUTTON(op->auto_measure_button), _("▶  자세차 자동 측정"));
+			camera_set_status_ui(op, _("CH 기준 화면이 맞지 않습니다. Face/Arm ± 또는 일괄적용 후 다시 시작하세요."));
+			return G_SOURCE_REMOVE;
+		}
 		char buf[128];
 		double rate = op->snst->rate;
 		double amp  = op->snst->amp;
@@ -3339,6 +4612,7 @@ static gboolean auto_measure_tick(gpointer data) {
 		op_ui_flush_pending();
 		op->auto_measure_pending_ch_return = 0;
 		op->auto_measure_timer = 0;
+		set_manual_buttons_enabled(op, 1);
 		g_thread_new("auto_home", auto_measure_finish_home_thread_func, op);
 		return G_SOURCE_REMOVE;
 	}
@@ -3367,6 +4641,121 @@ static gboolean auto_measure_tick(gpointer data) {
 	return G_SOURCE_CONTINUE;
 }
 
+static void auto_measure_reset_pos_data(struct output_panel *op)
+{
+	if (!op)
+		return;
+	for (int i = 0; i < POS_FIXED_COUNT; i++) {
+		op->pos_measured[i] = 0;
+		op->pos_rate[i] = 0.0;
+		op->pos_amp[i] = 0.0;
+		op->pos_be[i] = 0.0;
+		gtk_label_set_text(GTK_LABEL(op->pos_labels[i]),
+			_("Rate: -- s/d  |  Amp: --°  |  BE: -- ms"));
+	}
+}
+
+static void auto_measure_start_sequence(struct output_panel *op, int skip_baseline_gate)
+{
+	if (!op)
+		return;
+	if (op->auto_measure_state != 0)
+		return;
+	if (op->camera_auto_active)
+		return;
+	/* 사용자가 [자세차 자동 측정]을 눌렀다면, 이전 취소 상태는 즉시 해제 */
+	s_camera_auto_pause_until_ms = 0;
+	s_camera_auto_block_until_ms = 0;
+
+	output_panel_abort_camera_auto_baseline(op);
+	op->camera_auto_cancel = 0;
+
+	op->auto_measure_pending_ch_return = 0;
+	if (op->auto_measure_button && GTK_IS_WIDGET(op->auto_measure_button))
+		gtk_button_set_label(GTK_BUTTON(op->auto_measure_button), _("▶  자세차 자동 측정"));
+
+	arm_release_live_poll_stop();
+	if (!motor_init(motor_get_port())) {
+		GtkWidget *win = gtk_widget_get_toplevel(op->panel);
+		if (!GTK_IS_WINDOW(win)) win = NULL;
+		show_purchase_required_dialog(win, _("장치 연결 오류"));
+		return;
+	}
+	motor_ensure_torque_on();
+	motor_ensure_torque_on_for_position_move();
+	g_usleep(300000);
+	{
+		int r1 = motor_read_present_position(1);
+		int r2 = motor_read_present_position(2);
+		if (r1 < 0 || r2 < 0) {
+			motor_disable_torque_all();
+			motor_close();
+			GtkWidget *win = gtk_widget_get_toplevel(op->panel);
+			if (!GTK_IS_WINDOW(win)) win = NULL;
+			GtkWidget *dlg = gtk_message_dialog_new(GTK_WINDOW(win), GTK_DIALOG_MODAL,
+				GTK_MESSAGE_ERROR, GTK_BUTTONS_OK,
+				"%s", _("서보 위치를 읽지 못했습니다. USB·서보를 확인한 뒤 다시 시도하세요."));
+			gtk_window_set_title(GTK_WINDOW(dlg), _("자세차 자동 측정"));
+			if (win) gtk_window_set_transient_for(GTK_WINDOW(dlg), GTK_WINDOW(win));
+			gtk_dialog_run(GTK_DIALOG(dlg));
+			gtk_widget_destroy(dlg);
+			return;
+		}
+		if (!skip_baseline_gate) {
+			int vdF, vdA;
+			int lf, la, chF, chA, dF, dA;
+			motor_get_visual_goal_deltas(&vdF, &vdA);
+			lf = logical_face_from_raw(r1, vdF);
+			la = logical_arm_from_raw(r2, vdA);
+			baseline_ch_targets_logical(&chF, &chA);
+			dF = tick_delta_signed(chF, lf);
+			dA = tick_delta_signed(chA, la);
+			if (abs(dF) >= POS_AUTO_MEASURE_BASELINE_MAX_DELTA_TICKS
+			    || abs(dA) >= POS_AUTO_MEASURE_BASELINE_MAX_DELTA_TICKS) {
+				motor_disable_torque_all();
+				motor_close();
+				/* 오차가 크면 evaluate 경유 조건에 막히지 않게 카메라 자동기준점을 즉시 시작 */
+				s_camera_auto_pause_until_ms = 0;
+				s_camera_auto_block_until_ms = 0;
+				visual_baseline_start_auto(op, 1);
+				return;
+			}
+		}
+		{
+			int vdF, vdA;
+			motor_get_visual_goal_deltas(&vdF, &vdA);
+			int lf = logical_face_from_raw(r1, vdF);
+			int la = logical_arm_from_raw(r2, vdA);
+			last_pos1 = clamp_face_hard(norm4096_pc(lf));
+			last_pos2 = clamp_arm_hard(norm4096_pc(la));
+			g_spin_face = last_pos1;
+			g_spin_arm = last_pos2;
+		}
+	}
+
+	auto_measure_reset_pos_data(op);
+	op->auto_measure_state = 1;
+	op->auto_measure_countdown = 20;
+	{
+		int baseFace = face_positions[g_pos_ui_order[0]];
+		int baseArm = arm_positions[g_pos_ui_order[0]];
+		int dur1 = calc_duration(last_pos1, baseFace);
+		int dur2 = calc_duration(last_pos2, baseArm);
+		motor_ensure_torque_on_for_position_move();
+		motor_move(1, baseFace, dur1, 0);
+		g_usleep(100000);
+		motor_move(2, baseArm, dur2, 0);
+		last_pos1 = baseFace;
+		last_pos2 = baseArm;
+	}
+	motor_disable_torque_all();
+	motor_close();
+
+	set_manual_buttons_enabled(op, 0);
+	op->auto_measure_timer = g_timeout_add_seconds(1, auto_measure_tick, op);
+	auto_measure_set_button_countdown_label(op);
+}
+
 void on_auto_measure_clicked(GtkWidget *widget, gpointer data) {
 	(void)widget;
 	struct output_panel *op = (struct output_panel *)data;
@@ -3392,93 +4781,20 @@ void on_auto_measure_clicked(GtkWidget *widget, gpointer data) {
 		}
 		op->auto_measure_state = 0;
 		op->auto_measure_pending_ch_return = 1;
+		set_manual_buttons_enabled(op, 1);
 		auto_measure_apply_ch_return_label(op);
 		return;
 	}
 
-	// 시작
-	op->auto_measure_pending_ch_return = 0;
-	gtk_button_set_label(GTK_BUTTON(op->auto_measure_button), _("▶  자세차 자동 측정"));
-	arm_release_live_poll_stop();
-	if (!motor_init(motor_get_port())) {
-		GtkWidget *win = gtk_widget_get_toplevel(op->panel);
-		if (!GTK_IS_WINDOW(win)) win = NULL;
-		show_purchase_required_dialog(win, _("장치 연결 오류"));
-		op->auto_measure_state = 0;
+	/* 사용자가 [자세차 자동 측정]을 누르면 항상 카메라 자동기준점부터 강제 시작한다.
+	 * (과거 pause/block 플래그나 분기 누락으로 '아무것도 안 하는' 상태 방지) */
+	s_camera_auto_pause_until_ms = 0;
+	s_camera_auto_block_until_ms = 0;
+	if (!op->camera_auto_active) {
+		visual_baseline_start_auto(op, 1);
 		return;
 	}
-	motor_ensure_torque_on();
-	motor_ensure_torque_on_for_position_move();
-	g_usleep(300000);
-	{
-		int r1 = motor_read_present_position(1);
-		int r2 = motor_read_present_position(2);
-		if (r1 < 0 || r2 < 0) {
-			motor_disable_torque_all();
-			motor_close();
-			GtkWidget *win = gtk_widget_get_toplevel(op->panel);
-			if (!GTK_IS_WINDOW(win)) win = NULL;
-			GtkWidget *dlg = gtk_message_dialog_new(GTK_WINDOW(win),
-				GTK_DIALOG_MODAL, GTK_MESSAGE_ERROR, GTK_BUTTONS_OK,
-				"%s", _("서보 위치를 읽지 못했습니다. USB·서보를 확인한 뒤 다시 시도하세요."));
-			gtk_window_set_title(GTK_WINDOW(dlg), _("자세차 자동 측정"));
-			if (win) gtk_window_set_transient_for(GTK_WINDOW(dlg), GTK_WINDOW(win));
-			gtk_dialog_run(GTK_DIALOG(dlg));
-			gtk_widget_destroy(dlg);
-			op->auto_measure_state = 0;
-			return;
-		}
-		int vdF, vdA;
-		motor_get_visual_goal_deltas(&vdF, &vdA);
-		int lf = logical_face_from_raw(r1, vdF);
-		int la = logical_arm_from_raw(r2, vdA);
-		int dF = tick_delta_signed(face_positions[BASE_SLOT_INDEX], lf);
-		int dA = tick_delta_signed(arm_positions[BASE_SLOT_INDEX], la);
-		if (abs(dF) >= POS_AUTO_MEASURE_BASELINE_MAX_DELTA_TICKS
-		    || abs(dA) >= POS_AUTO_MEASURE_BASELINE_MAX_DELTA_TICKS) {
-			motor_disable_torque_all();
-			motor_close();
-			GtkWidget *win = gtk_widget_get_toplevel(op->panel);
-			if (!GTK_IS_WINDOW(win)) win = NULL;
-			GtkWidget *dlg = gtk_message_dialog_new(GTK_WINDOW(win),
-				GTK_DIALOG_MODAL, GTK_MESSAGE_WARNING, GTK_BUTTONS_OK,
-				"%s", _("기준점이 맞지 않습니다. 기준점 미세조정으로 ch 자세를 맞춘 뒤 자세차 자동측정을 실행해 주세요."));
-			gtk_window_set_title(GTK_WINDOW(dlg), _("자세차 자동 측정"));
-			if (win) gtk_window_set_transient_for(GTK_WINDOW(dlg), GTK_WINDOW(win));
-			gtk_dialog_run(GTK_DIALOG(dlg));
-			gtk_widget_destroy(dlg);
-			op->auto_measure_state = 0;
-			return;
-		}
-		last_pos1 = clamp_face_hard(r1);
-		last_pos2 = clamp_arm_hard(r2);
-		g_spin_face = last_pos1;
-		g_spin_arm = last_pos2;
-	}
-
-	// 레이블 초기화 (고정 6자세)
-	for (int i = 0; i < POS_FIXED_COUNT; i++) {
-		gtk_label_set_text(GTK_LABEL(op->pos_labels[i]), _("Rate: -- s/d  |  Amp: --°  |  BE: -- ms"));
-	}
-
-	op->auto_measure_state = 1;
-	op->auto_measure_countdown = 20;
-	{
-		int baseFace = face_positions[g_pos_ui_order[0]];
-		int baseArm = arm_positions[g_pos_ui_order[0]];
-		int dur1 = calc_duration(last_pos1, baseFace);
-		int dur2 = calc_duration(last_pos2, baseArm);
-		motor_ensure_torque_on_for_position_move();
-		motor_move(1, baseFace, dur1, 0);
-		g_usleep(100000);
-		motor_move(2, baseArm, dur2, 0);
-		last_pos1 = baseFace;
-		last_pos2 = baseArm;
-	}
-	motor_close();
-
-	op->auto_measure_timer = g_timeout_add_seconds(1, auto_measure_tick, op);
-	auto_measure_set_button_countdown_label(op);
+	auto_measure_start_sequence(op, 0);
 }
 
 // ── Watch Winder ─────────────────────────────────────────────────────
@@ -3634,6 +4950,7 @@ void on_winder_clicked(GtkWidget *widget, gpointer data) {
 
 	if (op->winder_active) {
 		op->winder_active = 0;
+		op->camera_auto_cancel = 0;
 		if (op->winder_timeout_id != 0) {
 			g_source_remove(op->winder_timeout_id);
 			op->winder_timeout_id = 0;
@@ -3693,17 +5010,22 @@ void on_winder_clicked(GtkWidget *widget, gpointer data) {
 		motor_get_visual_goal_deltas(&vdF, &vdA);
 		lf = logical_face_from_raw(r1, vdF);
 		la = logical_arm_from_raw(r2, vdA);
-		dF = tick_delta_signed(face_positions[BASE_SLOT_INDEX], lf);
-		dA = tick_delta_signed(arm_positions[BASE_SLOT_INDEX], la);
+		{
+			int chF, chA;
+			baseline_ch_targets_logical(&chF, &chA);
+			dF = tick_delta_signed(chF, lf);
+			dA = tick_delta_signed(chA, la);
+		}
 		if (abs(dF) >= POS_AUTO_MEASURE_BASELINE_MAX_DELTA_TICKS
 		    || abs(dA) >= POS_AUTO_MEASURE_BASELINE_MAX_DELTA_TICKS) {
 			motor_disable_torque_all();
 			motor_close();
 			win = gtk_widget_get_toplevel(op->panel);
 			if (!GTK_IS_WINDOW(win)) win = NULL;
-			dlg = gtk_message_dialog_new(GTK_WINDOW(win),
-				GTK_DIALOG_MODAL, GTK_MESSAGE_WARNING, GTK_BUTTONS_OK,
-				"%s", _("기준점이 맞지 않습니다. 기준점 미세조정으로 ch 자세를 맞춘 뒤 와치와인더를 실행해 주세요."));
+			dlg = gtk_message_dialog_new(GTK_WINDOW(win), GTK_DIALOG_MODAL,
+				GTK_MESSAGE_WARNING, GTK_BUTTONS_OK,
+				"%s", _("CH 기준 자세가 아닙니다.\n"
+				        "⬆ ch 자세에서 [기준점 일괄적용] 후 와인더를 시작하세요."));
 			gtk_window_set_title(GTK_WINDOW(dlg), _("와치와인더"));
 			if (win) gtk_window_set_transient_for(GTK_WINDOW(dlg), GTK_WINDOW(win));
 			gtk_dialog_run(GTK_DIALOG(dlg));
@@ -3711,16 +5033,19 @@ void on_winder_clicked(GtkWidget *widget, gpointer data) {
 			return;
 		}
 		if (r1 >= 0) {
-			last_pos1 = clamp_face_hard(r1);
+			last_pos1 = clamp_face_hard(norm4096_pc(lf));
 			g_spin_face = last_pos1;
 		}
 		if (r2 >= 0) {
-			last_pos2 = clamp_arm_hard(r2);
+			last_pos2 = clamp_arm_hard(norm4096_pc(la));
 			g_spin_arm = last_pos2;
 		}
 	}
 	motor_disable_torque_all();
 	motor_close();
+
+	/* 진행 중인 카메라 자동 기준점이 모터·CH 복귀로 와인더를 끊지 않게 */
+	output_panel_abort_camera_auto_baseline(op);
 
 	op->winder_active = 1;
 	op->winder_state  = 0;
@@ -3777,7 +5102,17 @@ void generate_analysis(struct output_panel *op)
 		if (op->pos_rate[i] < min_rate) { min_rate = op->pos_rate[i]; min_idx = i; }
 		if (op->pos_rate[i] > max_rate) { max_rate = op->pos_rate[i]; max_idx = i; }
 	}
-	if (count == 0) return;
+	if (count == 0) {
+		if (op->analysis_textview && GTK_IS_TEXT_VIEW(op->analysis_textview)) {
+			GtkTextBuffer *buf = gtk_text_view_get_buffer(
+				GTK_TEXT_VIEW(op->analysis_textview));
+			gtk_text_buffer_set_text(buf,
+				_("측정된 자세가 없습니다.\n"
+				  "자세차 자동 측정을 끝까지 완료하거나, 자세별 [측정] 버튼으로 먼저 기록하세요."),
+				-1);
+		}
+		return;
+	}
 
 	double pos_error = max_rate - min_rate;
 	double avg_amp   = sum_amp  / count;

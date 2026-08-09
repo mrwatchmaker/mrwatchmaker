@@ -1,0 +1,374 @@
+/*
+    MrWatchmaker
+    Copyright (C) 2015 Marcello Mamino
+
+    This program is free software; you can redistribute it and/or modify
+    it under the terms of the GNU General Public License version 2 as
+    published by the Free Software Foundation.
+
+    This program is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License along
+    with this program; if not, write to the Free Software Foundation, Inc.,
+    51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+*/
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <math.h>
+#include <stdint.h>
+#include <complex.h>
+#include <fftw3.h>
+#include <stdarg.h>
+#include <gtk/gtk.h>
+#include <pthread.h>
+
+#ifdef __CYGWIN__
+#define _WIN32
+#endif
+
+#define CONFIG_FILE_NAME "mrwatchmaker.ini"
+#define CONFIG_INI_GROUP "mrwatchmaker"
+#define CONFIG_FILE_LEGACY "tg-timer.ini"
+#define CONFIG_INI_LEGACY_GROUP "tg"
+
+#define FILTER_CUTOFF 3000
+
+#define CAL_DATA_SIZE 900
+
+#define FIRST_STEP 1
+#define FIRST_STEP_LIGHT 0
+
+#define NSTEPS 4
+#define PA_SAMPLE_RATE 44100
+#define PA_BUFF_SIZE (PA_SAMPLE_RATE << (NSTEPS + FIRST_STEP))
+
+#define OUTPUT_FONT 70
+#define OUTPUT_WINDOW_HEIGHT 70
+
+#define POSITIVE_SPAN 10
+#define NEGATIVE_SPAN 25
+
+#define EVENTS_COUNT 10000
+#define EVENTS_MAX 100
+#define PAPERSTRIP_ZOOM 10
+#define PAPERSTRIP_ZOOM_CAL 100
+#define PAPERSTRIP_MARGIN .2
+
+#define MIN_BPH 12000
+#define MAX_BPH 72000
+#define DEFAULT_BPH 21600
+#define MIN_LA 10 // deg
+#define MAX_LA 90 // deg
+#define DEFAULT_LA 52 // deg
+#define MIN_CAL -1000 // 0.1 s/d
+#define MAX_CAL 1000 // 0.1 s/d
+
+#define PRESET_BPH { 12000, 14400, 18000, 19800, 21600, 25200, 28800, 36000, 43200, 72000, 0 };
+
+#ifdef DEBUG
+#define debug(...) print_debug(__VA_ARGS__)
+#else
+#define debug(...) {}
+#endif
+
+#define UNUSED(X) (void)(X)
+
+/* algo.c */
+struct processing_buffers {
+	int sample_rate;
+	int sample_count;
+	float *samples, *samples_sc, *waveform, *waveform_sc, *tic_wf, *slice_wf, *tic_c;
+	fftwf_complex *fft, *sc_fft, *tic_fft, *slice_fft;
+	fftwf_plan plan_a, plan_b, plan_c, plan_d, plan_e, plan_f, plan_g;
+	struct filter *hpf, *lpf;
+	double period,sigma,be,waveform_max,phase,tic_pulse,toc_pulse,amp;
+	double cal_phase;
+	int waveform_max_i;
+	int tic,toc;
+	int ready;
+	uint64_t timestamp, last_tic, last_toc, events_from;
+	uint64_t *events;
+#ifdef DEBUG
+	int debug_size;
+	float *debug;
+#endif
+};
+
+struct calibration_data {
+	int wp;
+	int size;
+	int state;
+	double calibration;
+	uint64_t start_time;
+	double *times;
+	double *phases;
+	uint64_t *events;
+};
+
+void setup_buffers(struct processing_buffers *b);
+void pb_destroy(struct processing_buffers *b);
+struct processing_buffers *pb_clone(struct processing_buffers *p);
+void pb_destroy_clone(struct processing_buffers *p);
+void process(struct processing_buffers *p, int bph, double la, int light);
+void setup_cal_data(struct calibration_data *cd);
+void cal_data_destroy(struct calibration_data *cd);
+int test_cal(struct processing_buffers *p);
+int process_cal(struct processing_buffers *p, struct calibration_data *cd);
+
+/* audio.c */
+struct processing_data {
+	struct processing_buffers *buffers;
+	uint64_t last_tic;
+	int is_light;
+};
+
+int start_portaudio(int *nominal_sample_rate, double *real_sample_rate);
+int terminate_portaudio();
+uint64_t get_timestamp(int light);
+int analyze_pa_data(struct processing_data *pd, int bph, double la, uint64_t events_from);
+int analyze_pa_data_cal(struct processing_data *pd, struct calibration_data *cd);
+int audio_set_preferred_input_device(int pa_device_index); /* -1=auto(USB 우선) */
+int audio_get_preferred_input_device(void);
+int audio_get_active_input_device(void);
+int audio_get_input_device_count(void);
+int audio_get_nth_input_device_index(int nth);
+const char *audio_get_device_display_name(int pa_device_index);
+int audio_device_looks_usb(int pa_device_index);
+
+/* computer.c */
+struct snapshot {
+	struct processing_buffers *pb;
+	int is_old;
+	uint64_t timestamp;
+	int is_light;
+
+	int nominal_sr;
+	int calibrate;
+	int bph;
+	double la; // deg
+	int cal; // 0.1 s/d
+
+	int events_count;
+	uint64_t *events; // used in cal+timegrapher mode
+	int events_wp; // used in cal+timegrapher mode
+	uint64_t events_from; // used only in timegrapher mode
+
+	int signal;
+
+	int cal_state;
+	int cal_percent;
+	int cal_result; // 0.1 s/d
+
+	// data dependent on bph, la, cal
+	double sample_rate;
+	int guessed_bph;
+	double rate;
+	double be;
+	double amp;
+
+	double trace_centering;
+};
+
+struct computer {
+	pthread_t thread;
+	pthread_mutex_t mutex;
+	pthread_cond_t cond;
+
+// controlled by interface
+	int recompute;
+	int calibrate;
+	int bph;
+	double la; // deg
+	int clear_trace;
+	void (*callback)(void *);
+	void *callback_data;
+
+	struct processing_data *pdata;
+	struct calibration_data *cdata;
+
+	struct snapshot *actv;
+	struct snapshot *curr;
+};
+
+struct snapshot *snapshot_clone(struct snapshot *s);
+void snapshot_destroy(struct snapshot *s);
+void computer_destroy(struct computer *c);
+struct computer *start_computer(int nominal_sr, int bph, double la, int cal, int light);
+void lock_computer(struct computer *c);
+void unlock_computer(struct computer *c);
+void compute_results(struct snapshot *s);
+
+/* output_panel.c */
+struct VisualBaseline;
+
+struct output_panel {
+	GtkWidget *panel;
+
+	GtkWidget *output_drawing_area;
+	GtkWidget *tic_drawing_area;
+	GtkWidget *toc_drawing_area;
+	GtkWidget *period_drawing_area;
+	GtkWidget *paperstrip_drawing_area;
+	GtkWidget *clear_button;
+
+	// Positional error: 0~5 고정 6자세(9·12·3·6·ch·cb), 6~7 추가 커스텀
+	GtkWidget *pos_labels[8];
+	GtkWidget *pos_coord_labels[6]; /* 고정 6자세: 목표 틱 Face/Arm */
+	GtkWidget *custom_name_labels[2];
+	GtkWidget *custom_rows[2];
+	int num_custom;                   // 0~2 (커스텀 1·2)
+	GtkWidget *auto_measure_button;
+	/* 자세차 자동 측정 취소 직후: 동일 버튼으로 ch(기준) 복귀 1회 유도 */
+	int auto_measure_pending_ch_return;
+	/* 기준점 미세조정 행: Present 기준 논리틱 Face/Arm 표시 */
+	GtkWidget *micro_motor_readout_label;
+	/* CH 카메라 자동 기준점 (미리보기는 메인 옆 레이어 창) */
+	GtkWidget *pos_scroll;
+	guint camera_preview_timer;
+	int camera_auto_active;
+	int camera_auto_cancel;
+	int camera_auto_continue_measure; /* 완료 후 자세차 자동측정 재시도 */
+	struct VisualBaseline *visual_baseline;
+	int auto_measure_state;
+	guint auto_measure_timer;
+	int auto_measure_countdown;
+	// 수동 자세별 측정(버튼)
+	GtkWidget *manual_measure_buttons[8]; // 0..5=고정 6자세, 6..7=추가 커스텀
+	GtkWidget *manual_measure_hint_label; // 기준점 미정렬 시 안내 문구
+	GtkWidget *manual_measure_status_label; // 수동 측정/복귀 진행 안내
+	int manual_measure_target;            // -1=비활성, 0..7=타겟
+	int manual_measure_countdown;         // 초 카운트다운
+	guint manual_measure_timer;
+
+	// Watch Winder
+	GtkWidget *winder_button;
+	GtkWidget *winder_status_label;
+	GtkWidget *winder_preset_combo;
+	GtkWidget *winder_speed_buttons[4];
+	int winder_active;    // 0=정지, 1=동작중
+	int winder_state;     // 현재 시퀀스 인덱스
+	int winder_countdown; // (legacy) ms 카운트다운
+	int winder_cycles;    // 완료된 순환 횟수
+	int winder_preset;    // 선택된 프리셋 인덱스
+	int winder_speed_level; // 1~4
+	int winder_tick_ms;   // winder tick 간격(ms)
+	guint winder_timeout_id; /* g_timeout_add_seconds(winder_tick) — 종료 시 제거 */
+
+	/* 와인더 연속 궤적(trajectory) */
+	int winder_serial_open;     // 시리얼 열림 여부
+	int winder_seg_total_ms;    // 현재 구간 총 시간
+	int winder_seg_elapsed_ms;  // 현재 구간 경과 시간
+	int winder_from1, winder_from2;
+	int winder_to1,   winder_to2;
+
+	// 자세차 측정 진단 리포트
+	GtkWidget *analysis_scroll;    // 스크롤 컨테이너
+	GtkWidget *analysis_textview;  // 분석 텍스트뷰
+	double  pos_rate[6];           // 자세별 레이트 (s/d)
+	double  pos_amp[6];            // 자세별 진폭 (°)
+	double  pos_be[6];             // 자세별 비트에러 (ms)
+	int     pos_measured[6];       // 측정 완료 여부
+
+#ifdef DEBUG
+	GtkWidget *debug_drawing_area;
+#endif
+	struct computer *computer;
+	struct snapshot *snst;
+};
+
+void initialize_palette();
+struct output_panel *init_output_panel(struct computer *comp, struct snapshot *snst, int border);
+void redraw_op(struct output_panel *op);
+void op_set_snapshot(struct output_panel *op, struct snapshot *snst);
+void op_set_border(struct output_panel *op, int i);
+void op_destroy(struct output_panel *op);
+/* 프로그램 종료 직전: 와인더 타이머 정지 후 🕘9시(기본)로 이동·토크 해제 (op 해제 전에 호출) */
+void op_shutdown_motor_home_9h(struct output_panel *op);
+/** Command 메뉴용 USB 카메라 선택 (device_index: VB_CAMERA_INDEX_AUTO 또는 0~) */
+void output_panel_append_camera_menu(GtkWidget *submenu, struct output_panel *op);
+void output_panel_select_camera(struct output_panel *op, int device_index);
+/* 비정상 종료 대응용: UI 참조 없이 CH(기본) 복귀·토크 해제만 시도 */
+void op_emergency_home_9h(void);
+
+/* interface.c */
+struct main_window {
+	GtkApplication *app;
+
+	GtkWidget *window;
+	GtkWidget *bph_combo_box;
+	GtkWidget *la_spin_button;
+	GtkWidget *cal_spin_button;
+	GtkWidget *snapshot_button;
+	GtkWidget *snapshot_name;
+	GtkWidget *snapshot_name_entry;
+	GtkWidget *cal_button;
+	GtkWidget *notebook;
+	GtkWidget *save_item;
+	GtkWidget *save_all_item;
+	GtkWidget *close_all_item;
+	struct output_panel *active_panel;
+
+	struct computer *computer;
+	struct snapshot *active_snapshot;
+	int computer_timeout;
+
+	int is_light;
+	int zombie;
+	int controls_active;
+	int calibrate;
+	int bph;
+	double la; // deg
+	int cal; // 0.1 s/d
+	int nominal_sr;
+	int lang;
+	/* Android VisualCalibrationStore와 동일: 시계 9시 기준 Face/Arm Δ(틱) */
+	int visual_delta_face;
+	int visual_delta_arm;
+	int mic_input_device; /* PortAudio 입력 장치 index, -1=auto(USB 우선) */
+
+	GKeyFile *config_file;
+	gchar *config_file_name;
+	struct conf_data *conf_data;
+
+	guint kick_timeout;
+	guint save_timeout;
+};
+
+extern int preset_bph[];
+
+#ifdef DEBUG
+extern int testing;
+#endif
+
+void print_debug(char *format,...);
+void error(char *format,...);
+
+/* config.c */
+#define CONFIG_FIELDS(OP) \
+	OP(bph, bph, int) \
+	OP(lift_angle, la, double) \
+	OP(calibration, cal, int) \
+	OP(light_algorithm, is_light, int) \
+	OP(language, lang, int) \
+	OP(visual_delta_face, visual_delta_face, int) \
+	OP(visual_delta_arm, visual_delta_arm, int) \
+	OP(mic_input_device, mic_input_device, int)
+
+struct conf_data {
+#define DEF(NAME,PLACE,TYPE) TYPE PLACE;
+	CONFIG_FIELDS(DEF)
+};
+
+void load_config(struct main_window *w);
+void save_config(struct main_window *w);
+void save_on_change(struct main_window *w);
+void close_config(struct main_window *w);
+
+/* serializer.c */
+int write_file(FILE *f, struct snapshot **s, char **names, uint64_t cnt);
+int read_file(FILE *f, struct snapshot ***s, char ***names, uint64_t *cnt);

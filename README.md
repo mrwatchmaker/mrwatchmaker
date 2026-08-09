@@ -79,7 +79,7 @@ make
 
 Debug build:
 ```sh
-make tg-timer-dbg
+make mrwatchmaker-dbg
 ```
 
 ### Compiling on Windows
