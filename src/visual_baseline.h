@@ -55,6 +55,8 @@ int vb_get_saved_camera_index(void);
 int vb_save_camera_index_to_conf(int device_index);
 /** 사용 가능한(USB 우선) 카메라 인덱스 나열. 반환=개수 */
 int vb_probe_usb_cameras(int *indices_out, int max_count);
+/** 해당 인덱스 카메라의 Windows 표시 이름(UTF-8)을 buf 에. 성공 1, 실패 0 */
+int vb_get_camera_name(int index, char *buf, int buflen);
 int vb_has_reference(const VisualBaseline *vb);
 
 /** exe 폴더 ch_baseline_ref.png 경로 (없어도 반환, 호출자 g_free) */

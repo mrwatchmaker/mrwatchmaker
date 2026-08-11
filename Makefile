@@ -416,7 +416,7 @@ am__quote =
 am__tar = $${TAR-tar} chof - "$$tardir"
 am__untar = $${TAR-tar} xf -
 bindir = ${exec_prefix}/bin
-build_alias = x86_64-pc-cygwin
+build_alias = 
 builddir = .
 datadir = ${datarootdir}
 datarootdir = ${prefix}/share
@@ -436,7 +436,7 @@ mandir = ${datarootdir}/man
 mkdir_p = $(MKDIR_P)
 oldincludedir = /usr/include
 pdfdir = ${docdir}
-prefix = /usr
+prefix = 
 program_transform_name = s,x,x,
 psdir = ${docdir}
 sbindir = ${exec_prefix}/sbin
@@ -484,6 +484,7 @@ EXTRA_DIST = autogen.sh \
 	     README.md \
 	     reference_9oclock.png
 
+CLEANFILES = copy-dlls-stamp
 all: all-recursive
 
 .SUFFIXES:
@@ -1458,7 +1459,8 @@ distcleancheck: distclean
 	       exit 1; } >&2
 check-am: all-am
 check: check-recursive
-all-am: Makefile $(PROGRAMS)
+#all-local:
+all-am: Makefile $(PROGRAMS) all-local
 installdirs: installdirs-recursive
 installdirs-am:
 	for dir in "$(DESTDIR)$(bindir)"; do \
@@ -1487,6 +1489,7 @@ mostlyclean-generic:
 	-test -z "$(MOSTLYCLEANFILES)" || rm -f $(MOSTLYCLEANFILES)
 
 clean-generic:
+	-test -z "$(CLEANFILES)" || rm -f $(CLEANFILES)
 
 distclean-generic:
 	-test -z "$(CONFIG_CLEAN_FILES)" || rm -f $(CONFIG_CLEAN_FILES)
@@ -1574,7 +1577,7 @@ uninstall-am: uninstall-binPROGRAMS
 
 .MAKE: $(am__recursive_targets) install-am install-strip
 
-.PHONY: $(am__recursive_targets) CTAGS GTAGS TAGS all all-am \
+.PHONY: $(am__recursive_targets) CTAGS GTAGS TAGS all all-am all-local \
 	am--refresh check check-am clean clean-binPROGRAMS \
 	clean-cscope clean-generic clean-noinstPROGRAMS cscope \
 	cscopelist-am ctags ctags-am dist dist-all dist-bzip2 \
@@ -1610,6 +1613,14 @@ valgrind: mrwatchmaker-vlg
 copy-dlls: all
 	@bash packaging/copy_dlls_mingw.sh "$(CURDIR)"
 .PHONY: copy-dlls
+
+# Windows: 매 빌드마다 exe에 맞는 런타임 DLL을 자동 복사.
+# exe가 새로 빌드될 때만 다시 복사(증분). 어느 PC에서 빌드하든
+# 그 빌드의 OpenCV/GTK 버전과 정확히 맞는 DLL이 항상 exe 옆에 남는다.
+all-local: copy-dlls-stamp
+copy-dlls-stamp: mrwatchmaker$(EXEEXT)
+	@bash packaging/copy_dlls_mingw.sh "$(CURDIR)"
+	@touch copy-dlls-stamp
 
 # Tell versions [3.59,3.63) of GNU make to not export all variables.
 # Otherwise a system limit (for SysV at least) may be exceeded.

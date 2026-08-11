@@ -8,3 +8,13 @@ src/.deps/
 autom4te.cache/
 config.log
 config.status
+
+# PC별 카메라 설정(장치 인덱스가 PC마다 달라 공유하면 안 됨)
+camera.conf
+
+# 빌드 후 DLL 자동 복사 스탬프
+copy-dlls-stamp
+
+# 설치 프로그램 산출물 / MSI 빌드 폴더
+MrWatchmaker_Setup_*.exe
+msi/

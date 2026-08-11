@@ -90,3 +90,14 @@ valgrind: mrwatchmaker-vlg
 copy-dlls: all
 	@bash packaging/copy_dlls_mingw.sh "$(CURDIR)"
 .PHONY: copy-dlls
+
+# Windows: 매 빌드마다 exe에 맞는 런타임 DLL을 자동 복사.
+# exe가 새로 빌드될 때만 다시 복사(증분). 어느 PC에서 빌드하든
+# 그 빌드의 OpenCV/GTK 버전과 정확히 맞는 DLL이 항상 exe 옆에 남는다.
+if BE_WINDOWS
+all-local: copy-dlls-stamp
+copy-dlls-stamp: mrwatchmaker$(EXEEXT)
+	@bash packaging/copy_dlls_mingw.sh "$(CURDIR)"
+	@touch copy-dlls-stamp
+CLEANFILES = copy-dlls-stamp
+endif

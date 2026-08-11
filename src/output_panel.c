@@ -3326,13 +3326,10 @@ static void camera_preview_show_device_status(struct output_panel *op)
 
 static int output_panel_open_camera_saved_or_auto(struct output_panel *op)
 {
-	int saved;
-
 	output_panel_ensure_visual_baseline(op);
 	vb_close_camera(op->visual_baseline);
-	saved = vb_get_saved_camera_index();
-	if (saved >= VB_CAMERA_PROBE_MIN_INDEX && saved <= VB_CAMERA_PROBE_MAX_INDEX)
-		return vb_open_camera(op->visual_baseline, saved);
+	/* 저장된 인덱스 검증(USB 여부)은 vb_open_camera_auto 안에서 처리한다.
+	 * 여기서 인덱스를 그대로 열면 다른 PC의 설정으로 내장 카메라가 잡힐 수 있음. */
 	return vb_open_camera_auto(op->visual_baseline);
 }
 
@@ -3427,10 +3424,14 @@ void output_panel_append_camera_menu(GtkWidget *submenu, struct output_panel *op
 	gtk_menu_shell_append(GTK_MENU_SHELL(submenu), auto_item);
 
 	for (int i = 0; i < cnt; i++) {
-		char label[96];
+		char label[128];
+		char name[80];
 		GtkWidget *mi;
 
-		snprintf(label, sizeof(label), "[USB] %s #%d", _("카메라"), indices[i]);
+		if (vb_get_camera_name(indices[i], name, sizeof(name)))
+			snprintf(label, sizeof(label), "[USB] %s (#%d)", name, indices[i]);
+		else
+			snprintf(label, sizeof(label), "[USB] %s #%d", _("카메라"), indices[i]);
 		mi = gtk_radio_menu_item_new_with_label(group, label);
 		group = gtk_radio_menu_item_get_group(GTK_RADIO_MENU_ITEM(mi));
 		g_object_set_data(G_OBJECT(mi), "cam_device", GINT_TO_POINTER(indices[i]));

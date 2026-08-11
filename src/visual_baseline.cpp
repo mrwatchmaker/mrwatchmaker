@@ -74,6 +74,12 @@ struct VisualBaseline {
 
 
 
+static void vb_list_dshow_camera_meta(std::vector<std::string> *names,
+	std::vector<std::string> *paths);
+static std::string vb_tolower_ascii(std::string s);
+/** USB 장치경로에서 vid_xxxx&pid_yyyy 서명을 추출(소문자). 없으면 "" */
+static std::string vb_extract_usbid(const std::string &device_path);
+
 static gchar *vb_exe_dir_alloc(void)
 
 {
@@ -130,8 +136,8 @@ static void vb_roi_defaults(VbRoi *roi)
 
 
 
-/** camera.conf: camera N | auto | 예전 숫자 + 선택적 "roi x y w h" */
-static void vb_read_camera_conf(int *cam_idx_out, VbRoi *roi_out)
+/** camera.conf: usb VID&PID | camera N | auto | 예전 숫자 + 선택적 "roi x y w h" */
+static void vb_read_camera_conf(int *cam_idx_out, VbRoi *roi_out, std::string *usbid_out)
 {
 	gchar *path = vb_camera_conf_path_alloc();
 	FILE *f = fopen(path, "r");
@@ -141,12 +147,19 @@ static void vb_read_camera_conf(int *cam_idx_out, VbRoi *roi_out)
 		*cam_idx_out = VB_CAMERA_INDEX_AUTO;
 	if (roi_out)
 		vb_roi_defaults(roi_out);
+	if (usbid_out)
+		usbid_out->clear();
 	if (!f)
 		return;
 
 	char line[96];
 	while (fgets(line, sizeof(line), f)) {
 		int n = -1;
+		if (usbid_out) {
+			char sig[64];
+			if (sscanf(line, " usb %63s", sig) == 1)
+				*usbid_out = vb_tolower_ascii(std::string(sig));
+		}
 		if (cam_idx_out) {
 			if (g_ascii_strncasecmp(line, "auto", 4) == 0) {
 				*cam_idx_out = VB_CAMERA_INDEX_AUTO;
@@ -185,14 +198,33 @@ static void vb_read_camera_conf(int *cam_idx_out, VbRoi *roi_out)
 int vb_get_saved_camera_index(void)
 {
 	int idx = VB_CAMERA_INDEX_AUTO;
-	vb_read_camera_conf(&idx, NULL);
+	vb_read_camera_conf(&idx, NULL, NULL);
 	return idx;
+}
+
+/** camera.conf 에 저장된 USB 하드웨어 서명(vid&pid). 없으면 "" */
+static std::string vb_read_saved_usbid(void)
+{
+	std::string sig;
+	vb_read_camera_conf(NULL, NULL, &sig);
+	return sig;
 }
 
 int vb_save_camera_index_to_conf(int device_index)
 {
 	VbRoi roi;
-	vb_read_camera_conf(NULL, &roi);
+	vb_read_camera_conf(NULL, &roi, NULL);
+
+	/* 선택한 카메라의 USB 하드웨어 ID(VID/PID)도 함께 저장해서,
+	 * 다음부터는 인덱스가 바뀌어도 같은 카메라를 정확히 찾게 한다. */
+	std::string usbid;
+	if (device_index >= VB_CAMERA_PROBE_MIN_INDEX
+	    && device_index <= VB_CAMERA_PROBE_MAX_INDEX) {
+		std::vector<std::string> names, paths;
+		vb_list_dshow_camera_meta(&names, &paths);
+		if ((size_t)device_index < paths.size())
+			usbid = vb_extract_usbid(paths[(size_t)device_index]);
+	}
 
 	gchar *path = vb_camera_conf_path_alloc();
 	FILE *f = fopen(path, "w");
@@ -200,6 +232,8 @@ int vb_save_camera_index_to_conf(int device_index)
 	if (!f)
 		return 0;
 
+	if (!usbid.empty())
+		fprintf(f, "usb %s\n", usbid.c_str());
 	if (device_index >= VB_CAMERA_PROBE_MIN_INDEX
 	    && device_index <= VB_CAMERA_PROBE_MAX_INDEX)
 		fprintf(f, "camera %d\n", device_index);
@@ -263,11 +297,56 @@ static std::string vb_tolower_ascii(std::string s)
 	return s;
 }
 
+static std::string vb_extract_usbid(const std::string &device_path)
+{
+	std::string p = vb_tolower_ascii(device_path);
+	size_t v = p.find("vid_");
+	if (v == std::string::npos)
+		return std::string();
+	size_t pid = p.find("pid_", v);
+	if (pid == std::string::npos)
+		return std::string();
+	if (v + 8 > p.size())
+		return std::string();
+	std::string vid = p.substr(v, 8); /* vid_xxxx */
+
+	size_t end = pid + 4;
+	size_t hexn = 0;
+	while (end < p.size() && hexn < 4
+	       && ((p[end] >= '0' && p[end] <= '9')
+		   || (p[end] >= 'a' && p[end] <= 'f'))) {
+		end++;
+		hexn++;
+	}
+	if (hexn == 0)
+		return std::string();
+	std::string pidpart = p.substr(pid, end - pid); /* pid_yyyy */
+	return vid + "&" + pidpart;
+}
+
 /** 높을수록 USB 외장 가능성. IR은 제외, 노트북 내장은 낮은 점수 */
 static int vb_camera_name_score(const std::string &friendly, const std::string &device_path)
 {
 	std::string name = vb_tolower_ascii(friendly);
 	std::string path = vb_tolower_ascii(device_path);
+
+	/* AiTimeBot 장비에 장착된 카메라 모듈(하드웨어 고정).
+	 * 노트북 내장 카메라도 내부적으로 USB(UVC)라서 이름/USB 여부만으로는 구분이 안 된다.
+	 * 그래서 VID/PID 로 못박아 최우선 선택한다. 어느 PC에 꽂아도 이 카메라만 잡힌다.
+	 * (다른 AiTimeBot 카메라 모듈이 추가되면 아래 목록에 VID/PID 를 넣으면 된다.)
+	 * FHD Camera = VID_1BCF&PID_2286. camera.conf 의 "usb ..." 로도 덮어쓸 수 있다. */
+	static const char *kAiTimeBotUsbIds[] = {
+		"vid_1bcf&pid_2286",
+	};
+	for (size_t i = 0; i < sizeof(kAiTimeBotUsbIds) / sizeof(kAiTimeBotUsbIds[0]); i++) {
+		if (path.find(kAiTimeBotUsbIds[i]) != std::string::npos)
+			return 400;
+	}
+
+	/* 이름에 AiTimeBot 이 들어가는 경우도 최우선 */
+	if (name.find("aitimebot") != std::string::npos
+	    || path.find("aitimebot") != std::string::npos)
+		return 300;
 
 	if (name.find("infrared") != std::string::npos
 	    || name.find(" ir ") != std::string::npos
@@ -472,21 +551,32 @@ int vb_probe_usb_cameras(int *indices_out, int max_count)
 {
 	std::vector<VbCamCand> cands;
 	vb_collect_candidates(&cands, 1, 0);
+	std::vector<std::string> names, paths;
+	vb_list_dshow_camera_meta(&names, &paths);
 	int n = 0;
 	for (size_t i = 0; i < cands.size() && n < max_count; i++) {
+		/* 메타 열거가 됐다면 USB(외장) 카메라만 목록에 넣는다. 내장 폴백 없음 */
+		if (!names.empty()
+		    && vb_score_for_index(cands[i].index, names, paths) < 100)
+			continue;
 		if (indices_out)
 			indices_out[n] = cands[i].index;
 		n++;
 	}
-	if (n == 0) {
-		vb_collect_candidates(&cands, 0, 0);
-		for (size_t i = 0; i < cands.size() && n < max_count; i++) {
-			if (indices_out)
-				indices_out[n] = cands[i].index;
-			n++;
-		}
-	}
 	return n;
+}
+
+int vb_get_camera_name(int index, char *buf, int buflen)
+{
+	if (!buf || buflen <= 0)
+		return 0;
+	buf[0] = '\0';
+	std::vector<std::string> names, paths;
+	vb_list_dshow_camera_meta(&names, &paths);
+	if (index < 0 || (size_t)index >= names.size() || names[(size_t)index].empty())
+		return 0;
+	g_strlcpy(buf, names[(size_t)index].c_str(), (gsize)buflen);
+	return 1;
 }
 
 static cv::Mat vb_bgr_to_analysis(const cv::Mat &bgr)
@@ -606,7 +696,7 @@ VisualBaseline *vb_create(void)
 
 	VisualBaseline *vb = new VisualBaseline();
 
-	vb_read_camera_conf(NULL, &vb->roi);
+	vb_read_camera_conf(NULL, &vb->roi, NULL);
 
 	return vb;
 
@@ -693,21 +783,57 @@ int vb_open_camera(VisualBaseline *vb, int device_index)
 	return 1;
 }
 
+/** 해당 인덱스가 실제 USB(외장) 카메라인지. 메타 열거 실패 시 판단 불가(0) */
+static int vb_index_is_usb_camera(int index)
+{
+	std::vector<std::string> names, paths;
+	vb_list_dshow_camera_meta(&names, &paths);
+	if (names.empty())
+		return 0;
+	return vb_score_for_index(index, names, paths) >= 100;
+}
+
 int vb_open_camera_auto(VisualBaseline *vb)
 {
 	if (!vb)
 		return 0;
 
+	/* 하드웨어는 항상 동일: USB(외장) 카메라만 사용, 내장/IR 카메라는 제외. */
+	std::vector<std::string> names, paths;
+	vb_list_dshow_camera_meta(&names, &paths);
+
+	/* 1) 저장된 USB 하드웨어 ID(VID/PID)와 일치하는 카메라를 최우선으로.
+	 *    인덱스가 바뀌거나 다른 PC여도 같은 카메라를 정확히 찾는다. */
+	std::string want = vb_read_saved_usbid();
+	if (!want.empty()) {
+		for (size_t i = 0; i < paths.size(); i++) {
+			if (vb_extract_usbid(paths[i]) != want)
+				continue;
+			std::string nm = i < names.size() ? names[i] : std::string();
+			if (vb_camera_name_score(nm, paths[i]) <= -50)
+				continue; /* IR 등 제외 */
+			if (vb_open_camera(vb, (int)i))
+				return 1;
+		}
+	}
+
+	/* 2) 저장된 인덱스는 이 PC에서 실제 USB 카메라를 가리킬 때만 신뢰.
+	 *    (다른 PC에서 만든 camera.conf가 여기선 내장 카메라를 가리킬 수 있음) */
 	int conf_idx = vb_get_saved_camera_index();
 	if (conf_idx >= VB_CAMERA_PROBE_MIN_INDEX
 	    && conf_idx <= VB_CAMERA_PROBE_MAX_INDEX
+	    && vb_index_is_usb_camera(conf_idx)
 	    && vb_open_camera(vb, conf_idx))
 		return 1;
 
+	/* 3) 첫 USB(외장) 카메라. 전체 선탐침 금지: 메타로 후보만 만들고 하나씩 연다. */
 	std::vector<VbCamCand> cands;
-	/* 전체 선탐침 금지: 메타로 후보만 만들고 하나씩 연다 */
-	vb_collect_candidates(&cands, 0, 0);
+	vb_collect_candidates(&cands, 1, 0);
 	for (size_t i = 0; i < cands.size(); i++) {
+		/* 메타 열거가 됐다면 USB(외장) 카메라만 허용 */
+		if (!names.empty()
+		    && vb_score_for_index(cands[i].index, names, paths) < 100)
+			continue;
 		if (vb_open_camera(vb, cands[i].index))
 			return 1;
 	}
@@ -771,7 +897,7 @@ static int load_ref_roi(VisualBaseline *vb, const char *path)
 	cv::Mat bgr = cv::imread(path, cv::IMREAD_COLOR);
 	if (bgr.empty())
 		return 0;
-	vb_read_camera_conf(NULL, &vb->roi);
+	vb_read_camera_conf(NULL, &vb->roi, NULL);
 	vb_roi_clamp(&vb->roi);
 	vb->ref_loaded = 1;
 	return 1;
